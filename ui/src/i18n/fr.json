@@ -191,7 +191,8 @@
     "aller_sites": "Mettre à jour les domaines dans la page Sites",
     "application": "Application…",
     "enregistre_simple": "Réglages enregistrés.",
-    "redemarrage_requis": "Des services sont en marche : utilisez « Tout redémarrer » dans l'onglet Services pour appliquer les changements."
+    "redemarrage_requis": "Des services sont en marche : utilisez « Tout redémarrer » dans l'onglet Services pour appliquer les changements.",
+    "apropos": "Stack de développement web locale et portable : PHP multi-versions, MariaDB, Nginx et Apache."
   },
   "catalogue": {
     "mis_a_jour": "Catalogue du {date}",

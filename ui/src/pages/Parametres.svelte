@@ -96,7 +96,12 @@
       {#if domaineChange}<button type="button" class="lien" onclick={allerAuxSites}>{t("parametres.aller_sites")} →</button>{/if}
     </div>
   </form>
-  <p class="muted mono petit">{t("app.racine", { racine })}</p>
+  <!-- À propos -->
+  <section class="apropos">
+    <img src="/img/logo-complet.png" alt="Rustserv" />
+    <p>{t("parametres.apropos")}</p>
+    <p class="muted mono petit">{t("app.racine", { racine })}</p>
+  </section>
 {/if}
 
 <style>
@@ -114,4 +119,7 @@
   .ok { color: var(--ok); }
   .erreur { color: var(--danger); }
   .avertissement { color: var(--accent); }
+  .apropos { max-width: 640px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); text-align: center; }
+  .apropos img { width: 320px; max-width: 100%; height: auto; }
+  .apropos p { margin: 6px 0; }
 </style>
