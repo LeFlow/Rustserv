@@ -94,6 +94,16 @@ pub fn sync(paths: &Paths, settings: &Settings, helper: &std::path::Path) -> Res
 mod tests {
     use super::*;
 
+    /// Chaque domaine proposé dans les Paramètres doit avoir sa description en français.
+    #[test]
+    fn chaque_domaine_est_decrit() {
+        let fr: serde_json::Value = serde_json::from_str(include_str!("../../../ui/src/i18n/fr.json")).unwrap();
+        for tld in TLD_AUTORISES {
+            assert!(fr["parametres"]["tld_desc"][tld].is_string(), "description manquante : parametres.tld_desc.{tld}");
+        }
+        assert_eq!(TLD_AUTORISES[0], "test", "le premier domaine est affiché comme recommandé");
+    }
+
     #[test]
     fn comparaison() {
         let s = compare(&["a.test".into(), "b.test".into()], &["b.test".into(), "vieux.test".into()]);

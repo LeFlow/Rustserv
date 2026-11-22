@@ -48,7 +48,7 @@
     {:else if page === "catalogue"}
       <Catalogue />
     {:else if page === "parametres"}
-      <Parametres racine={info?.racine ?? ""} />
+      <Parametres racine={info?.racine ?? ""} allerAuxSites={() => (page = "sites")} />
     {/if}
     <!-- Toujours monté (simplement masqué) : les terminaux restent ouverts d'une page à l'autre. -->
     <div class:cache={page !== "terminal"}>

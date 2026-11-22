@@ -209,18 +209,39 @@ pub fn service_log(state: State<'_, AppState>, group: Group) -> Result<String> {
 pub struct SettingsView {
     settings: Settings,
     warning: Option<serde_json::Value>,
+    /// Domaines de sites autorisés (réservés au réseau local), dans l'ordre recommandé.
+    tlds: &'static [&'static str],
 }
 
 #[tauri::command]
 pub fn settings_get(state: State<'_, AppState>) -> Result<SettingsView> {
-    Ok(SettingsView { settings: state.settings(), warning: state.settings_warning.clone() })
+    Ok(SettingsView {
+        settings: state.settings(),
+        warning: state.settings_warning.clone(),
+        tlds: rustserv_core::hosts::TLD_AUTORISES,
+    })
 }
 
-/// Enregistre les réglages. Ils s'appliquent au prochain (re)démarrage des services.
+#[derive(Serialize)]
+pub struct SaveResult {
+    /// Le domaine des sites a changé : les domaines doivent être redéclarés dans Windows.
+    domaine_change: bool,
+}
+
+/// Enregistre les réglages. Un changement de domaine est appliqué tout de suite
+/// (configurations et certificats régénérés, serveur web redémarré s'il tournait) ;
+/// les autres réglages s'appliquent au prochain (re)démarrage des services.
 #[tauri::command]
-pub fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<()> {
+pub async fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<SaveResult> {
     settings.validate()?;
+    let ancien_tld = state.settings().tld;
     settings.save(&state.paths)?;
-    *state.settings.write().map_err(|e| Error::Interne(e.to_string()))? = settings;
-    Ok(())
+    let domaine_change = settings.tld != ancien_tld;
+    *state.settings.write().map_err(|e| Error::Interne(e.to_string()))? = settings.clone();
+    if domaine_change {
+        tracing::info!(de = %ancien_tld, vers = %settings.tld, "domaine des sites modifié");
+        let installed = state.installer.installed()?;
+        state.orchestrator.apply(&settings, &installed).await?;
+    }
+    Ok(SaveResult { domaine_change })
 }

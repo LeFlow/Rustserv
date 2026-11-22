@@ -157,7 +157,18 @@
     "fuseau": "Fuseau horaire",
     "sites": "Sites",
     "tld": "Domaine des sites",
-    "tld_aide": "Le dossier www/monsite sera accessible sur monsite.{tld}."
+    "recommande": "recommandé",
+    "tld_pourquoi": "Seuls des domaines réservés au réseau local sont proposés : un vrai domaine (.dev, .com…) rendrait des sites Internet inaccessibles.",
+    "tld_desc": {
+      "test": "Réservé officiellement aux tests : il ne sera jamais attribué sur Internet. Le choix le plus sûr.",
+      "localhost": "Réservé à votre propre ordinateur. Chrome et Edge le reconnaissent même sans fichier hosts.",
+      "local": "Également utilisé par Bonjour/mDNS (imprimantes, appareils Apple) : la résolution peut être plus lente sur certains réseaux.",
+      "internal": "Réservé par l'ICANN (2024) aux réseaux privés : il ne sera jamais attribué sur Internet.",
+      "lan": "Usage courant sur les réseaux domestiques mais non officiel : peut entrer en conflit avec votre box."
+    },
+    "enregistre_domaine": "Domaine modifié : configurations et certificats HTTPS mis à jour. Il reste à déclarer les nouveaux domaines dans Windows.",
+    "aller_sites": "Mettre à jour les domaines dans la page Sites",
+    "application": "Application…"
   },
   "catalogue": {
     "mis_a_jour": "Catalogue du {date}",

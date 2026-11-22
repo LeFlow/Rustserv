@@ -99,6 +99,13 @@ export interface Settings {
 export interface SettingsView {
   settings: Settings;
   warning: ErreurBackend | null;
+  /** Domaines de sites autorisés (le premier est recommandé). */
+  tlds: string[];
+}
+
+export interface SaveResult {
+  /** Le domaine des sites a changé : les domaines doivent être redéclarés dans Windows. */
+  domaine_change: boolean;
 }
 
 // ------------------------------------------------------------ PHP & sites
@@ -258,7 +265,7 @@ export const api = {
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>
     listen<StatusEvent>("service-status", (e) => cb(e.payload)),
   settingsGet: () => invoke<SettingsView>("settings_get"),
-  settingsSave: (settings: Settings) => invoke<void>("settings_save", { settings }),
+  settingsSave: (settings: Settings) => invoke<SaveResult>("settings_save", { settings }),
 
   appInfo: () => invoke<AppInfo>("app_info"),
   catalogList: () => invoke<CatalogView>("catalog_list"),
