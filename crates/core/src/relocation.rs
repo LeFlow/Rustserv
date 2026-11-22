@@ -27,7 +27,11 @@ fn fichiers(dossier: &Path, out: &mut Vec<PathBuf>) {
         let p = e.path();
         if p.is_dir() {
             fichiers(&p, out);
-        } else if p.extension().and_then(|x| x.to_str()).is_some_and(|x| EXTENSIONS.contains(&x.to_ascii_lowercase().as_str())) {
+        } else if p.extension().and_then(|x| x.to_str()).is_some_and(|x| EXTENSIONS.contains(&x.to_ascii_lowercase().as_str()))
+            // Sauvegardes horodatées des php.ini (« php.ini.1795320050758 ») : à corriger aussi,
+            // sinon une restauration réintroduirait l'ancien chemin.
+            || p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("php.ini."))
+        {
             out.push(p);
         }
     }
@@ -80,6 +84,8 @@ mod tests {
         let ini = ancien.etc().join("php").join("8.3.37").join("php.ini");
         std::fs::create_dir_all(ini.parent().unwrap()).unwrap();
         std::fs::write(&ini, format!("extension_dir = \"{r}/bin/php/php-8.3.37/ext\"\r\nerror_log = \"{}\\logs\\php.log\"\r\n", ancien.root().display())).unwrap();
+        std::fs::create_dir_all(ini.parent().unwrap().join("backups")).unwrap();
+        std::fs::write(ini.parent().unwrap().join("backups").join("php.ini.1795320050758"), format!("extension_dir = \"{r}/ext\"")).unwrap();
         std::fs::create_dir_all(ancien.data().join("mariadb-12.3")).unwrap();
         std::fs::write(ancien.data().join("mariadb-12.3").join("my.ini"), format!("datadir={r}/data/mariadb-12.3\n")).unwrap();
         // Premier démarrage : rien à corriger, la racine est mémorisée.
@@ -90,7 +96,7 @@ mod tests {
         std::fs::rename(ancien.root(), &nouveau_dir).unwrap();
         let nouveau = Paths::new(&nouveau_dir);
         let modifies = relocate(&nouveau).unwrap();
-        assert_eq!(modifies.len(), 2);
+        assert_eq!(modifies.len(), 3, "php.ini, sa sauvegarde et my.ini");
         let txt = std::fs::read_to_string(nouveau.etc().join("php").join("8.3.37").join("php.ini")).unwrap();
         let n = slash(nouveau.root());
         assert!(txt.contains(&format!("{n}/bin/php/php-8.3.37/ext")), "{txt}");

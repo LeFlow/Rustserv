@@ -198,6 +198,17 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   version du site + `MYSQL_TCP_PORT`. Import Laragon/WAMP : version MariaDB choisissable par site.
 - Test réel : `mariadb_multi_versions_par_site` (`target/pile-mariadb`, 12.3 → 11.4).
 
+## Version portable et déplacement du dossier
+
+- Installation de l'utilisateur : **`C:\Rustserv\`** (copie de `portable/` sans tmp/logs + `rustserv.exe`
+  + `rustserv-helper.exe` de `target/release`). Ne jamais faire tourner l'app de dev et la portable
+  en même temps (mêmes ports). Mettre à jour la portable = rebuild (`pnpm tauri build`) puis recopier
+  **uniquement** les deux .exe (les données restent).
+- `relocation::relocate` (au démarrage, avant tout) : `etc/racine.txt` mémorise le dossier ; s'il a
+  changé, l'ancien chemin (formes `C:\` et `C:/`) est remplacé dans `etc/**` (ini, conf, php, neon,
+  json + sauvegardes `php.ini.<horodatage>`) et `data/*/my.ini`. Vérifié sur la vraie copie (7 fichiers).
+- Compatibilité : annulation des tests/analyses via `compat::ou_annuler` (kill_on_drop des processus).
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
