@@ -72,6 +72,23 @@ http {
 {{- php(s.upstream, server_dir) | indent(4) }}
         }
 {%- endfor %}
+{%- if adminer_dir and default_upstream %}
+
+        # Adminer (gestion des bases de données) : accessible depuis ce PC uniquement.
+        location = /adminer {
+            return 301 /adminer/;
+        }
+        location ^~ /adminer/ {
+            allow 127.0.0.1;
+            allow ::1;
+            deny all;
+            fastcgi_pass {{ default_upstream }};
+            include "{{ server_dir }}/conf/fastcgi_params";
+            fastcgi_param SCRIPT_FILENAME "{{ adminer_dir }}/index.php";
+            fastcgi_param SCRIPT_NAME /adminer/index.php;
+            fastcgi_param HTTP_PROXY "";
+        }
+{%- endif %}
 {%- if default_upstream %}
 {{ php(default_upstream, server_dir) }}
 {%- endif %}

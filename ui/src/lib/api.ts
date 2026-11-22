@@ -312,6 +312,7 @@ export const api = {
   startAll: () => invoke<void>("services_start_all"),
   stopAll: () => invoke<void>("services_stop_all"),
   restartAll: () => invoke<Groupe[]>("services_restart_all"),
+  adminerOpen: () => invoke<string>("adminer_open"),
   restartPending: () => invoke<boolean>("services_restart_pending"),
   serviceLog: (group: Groupe) => invoke<string>("service_log", { group }),
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>

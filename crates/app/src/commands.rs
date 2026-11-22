@@ -257,6 +257,43 @@ pub async fn settings_save(state: State<'_, AppState>, settings: Settings) -> Re
     Ok(SaveResult { domaine_change, redemarrage_requis: autres_changements && en_marche })
 }
 
+/// « Gérer les bases » : installe Adminer si besoin, démarre MariaDB et le serveur
+/// web s'ils sont arrêtés (ou recharge sa configuration), puis renvoie l'adresse d'Adminer.
+#[tauri::command]
+pub async fn adminer_open(state: State<'_, AppState>) -> Result<String> {
+    use rustserv_core::orchestrator::Group;
+    let mut nouveau = false;
+    if !state.installer.installed()?.iter().any(|p| p.package == "adminer") {
+        let release = {
+            let cat = state.catalog.read().map_err(|e| Error::Interne(e.to_string()))?;
+            match cat.latest("adminer", None) {
+                Some(r) => r.clone(),
+                None => rustserv_core::catalog::Catalog::embedded()?
+                    .latest("adminer", None)
+                    .cloned()
+                    .ok_or_else(|| Error::PaquetInconnu { id: "adminer".into() })?,
+            }
+        };
+        state.installer.install("adminer", &release, &std::sync::atomic::AtomicBool::new(false), &|_| {}).await?;
+        nouveau = true;
+    }
+    let settings = state.settings();
+    let installed = state.installer.installed()?;
+    let actifs = state.orchestrator.running_groups();
+    if nouveau && actifs.contains(&Group::Web) {
+        // Le serveur web doit connaître la nouvelle adresse /adminer/.
+        state.orchestrator.apply(&settings, &installed).await?;
+    }
+    if !actifs.contains(&Group::Mariadb) {
+        state.orchestrator.start(Group::Mariadb, &settings, &installed).await?;
+    }
+    if !actifs.contains(&Group::Web) {
+        state.orchestrator.start(Group::Web, &settings, &installed).await?;
+    }
+    let port = settings.ports.http;
+    Ok(if port == 80 { "http://localhost/adminer/".into() } else { format!("http://localhost:{port}/adminer/") })
+}
+
 /// Un redémarrage est-il nécessaire pour appliquer des réglages ?
 #[tauri::command]
 pub fn services_restart_pending(state: State<'_, AppState>) -> Result<bool> {

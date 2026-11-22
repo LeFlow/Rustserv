@@ -74,6 +74,8 @@ struct WebContext {
     /// Upstream PHP du site par défaut (localhost) ; vide si PHP non installé.
     default_upstream: String,
     sites: Vec<SiteCtx>,
+    /// Dossier du lanceur Adminer (etc/adminer) si Adminer est installé, sinon vide.
+    adminer_dir: String,
     /// HTTPS actif (autorité locale créée).
     https: bool,
     localhost_cert: Option<CertCtx>,
@@ -232,7 +234,9 @@ impl<'a> Stack<'a> {
                 }))
             })
             .collect::<Result<Vec<_>>>()?;
+        let adminer_dir = self.prepare_adminer()?.map(|d| slash(&d)).unwrap_or_default();
         Ok(WebContext {
+            adminer_dir,
             https: localhost_cert.is_some(),
             localhost_cert,
             server_dir: slash(&server.path),
@@ -245,6 +249,19 @@ impl<'a> Stack<'a> {
             default_upstream: default.map(|p| upstream_name(&p.version)).unwrap_or_default(),
             sites,
         })
+    }
+
+    /// Génère `etc/adminer/index.php` (connexion automatique au MariaDB local) si
+    /// Adminer est installé. Renvoie le dossier à servir sous /adminer/.
+    pub fn prepare_adminer(&self) -> Result<Option<PathBuf>> {
+        let Ok(pkg) = self.pick("adminer", None) else { return Ok(None) };
+        let dir = self.paths.etc().join("adminer");
+        let ctx = serde_json::json!({
+            "port": self.settings.ports.mariadb,
+            "adminer_php": slash(&pkg.path.join("adminer.php")),
+        });
+        write(&dir.join("index.php"), &templates::render(self.paths, templates::ADMINER_PHP, ctx)?)?;
+        Ok(Some(dir))
     }
 
     /// Ports du serveur web : HTTP, plus HTTPS si l'autorité locale existe.

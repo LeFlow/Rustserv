@@ -48,6 +48,7 @@ fn main() {
             commands::settings_save,
             commands::services_restart_pending,
             commands::services_restart_all,
+            commands::adminer_open,
             php_commands::php_overview,
             php_commands::php_set_default,
             php_commands::php_pin,

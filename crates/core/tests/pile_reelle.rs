@@ -576,6 +576,58 @@ async fn installation_phpunit_et_pest() {
     assert_eq!(r[0].resume.as_ref().map(|s| s.tests), Some(1));
 }
 
+/// Adminer servi sous /adminer/ par nginx puis Apache, connecté automatiquement à MariaDB.
+#[tokio::test]
+#[ignore]
+async fn adminer_connexion_automatique() {
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    for (id, b) in [("nginx", None), ("apache", None), ("php", Some("8.3")), ("mariadb", None), ("adminer", None)] {
+        installe(&inst, &cat, id, b).await;
+    }
+    let mut settings = Settings::default();
+    settings.ports.http = libre();
+    settings.ports.mariadb = libre();
+    let port = settings.ports.http;
+    let installed = inst.installed().unwrap();
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    orch.start(Group::Mariadb, &settings, &installed).await.unwrap_or_else(|e| panic!("{e}"));
+
+    for serveur in [WebServer::Nginx, WebServer::Apache] {
+        settings.web_server = serveur;
+        orch.start(Group::Web, &settings, &installed).await.unwrap_or_else(|e| panic!("{serveur:?} : {e}\n{}", e.params()));
+        let client = reqwest::Client::builder().no_proxy().cookie_store(true).redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let base = format!("http://127.0.0.1:{port}");
+
+        // /adminer → /adminer/
+        let r = client.get(format!("{base}/adminer")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 301, "{serveur:?} : redirection /adminer");
+
+        // Première visite : connexion automatique puis redirection vers ?server=…&username=root.
+        let r = client.get(format!("{base}/adminer/")).send().await.unwrap();
+        let code = r.status().as_u16();
+        let lieu = r.headers().get("location").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        println!("{serveur:?} /adminer/ → {code} {lieu}");
+        assert!(code == 302 || code == 303, "{serveur:?} : connexion automatique attendue, reçu {code} : {}", r.text().await.unwrap_or_default().chars().take(500).collect::<String>());
+        assert!(lieu.contains("username=root"), "{lieu}");
+
+        // Adresse relative à /adminer/ (« ?server=… »).
+        let url = if lieu.starts_with("http") { lieu.clone() } else if lieu.starts_with('/') { format!("{base}{lieu}") } else { format!("{base}/adminer/{lieu}") };
+        let r = client.get(&url).send().await.unwrap();
+        let code = r.status().as_u16();
+        let page = r.text().await.unwrap();
+        println!("{serveur:?} {url} → {code}, {} octets", page.len());
+        assert_eq!(code, 200);
+        assert!(page.contains("information_schema"), "{serveur:?} : liste des bases absente :\n{}", page.chars().take(800).collect::<String>());
+        assert!(page.contains("Rustserv"), "nom personnalisé absent");
+        orch.stop(Group::Php).await.unwrap();
+    }
+    orch.supervisor().stop_all().await;
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

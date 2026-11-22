@@ -115,6 +115,19 @@ ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
         </FilesMatch>
     </Directory>
 {%- endfor %}
+{%- if adminer_dir and default_upstream %}
+    # Adminer (gestion des bases de données) : accessible depuis ce PC uniquement.
+    RedirectMatch 301 ^/adminer$ /adminer/
+    Alias /adminer/ "{{ adminer_dir }}/"
+    <Directory "{{ adminer_dir }}">
+        Require local
+        DirectoryIndex index.php
+        <FilesMatch "\.php$">
+            SetHandler "proxy:balancer://{{ default_upstream }}/"
+        </FilesMatch>
+        ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "{{ adminer_dir }}/index.php"
+    </Directory>
+{%- endif %}
 {%- endmacro %}
 
 {%- macro site(s) %}

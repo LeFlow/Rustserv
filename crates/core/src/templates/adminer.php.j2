@@ -1,0 +1,48 @@
+<?php
+// ------------------------------------------------------------------
+// Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
+// Connexion automatique d'Adminer au MariaDB local (root sans mot de passe).
+// Sécurité : le serveur web n'autorise cette page que depuis ce PC (127.0.0.1).
+// ------------------------------------------------------------------
+
+function adminer_object()
+{
+    class AdminerRustserv extends \Adminer\Adminer
+    {
+        function name()
+        {
+            return 'Rustserv';
+        }
+
+        function credentials()
+        {
+            return ['127.0.0.1:{{ port }}', 'root', ''];
+        }
+
+        // Le MariaDB de développement n'a pas de mot de passe : connexion acceptée.
+        function login($login, $password)
+        {
+            return true;
+        }
+
+        // Pas de jeton anti-CSRF pour la connexion automatique (page locale uniquement).
+        function verifyLoginToken()
+        {
+            return false;
+        }
+    }
+    return new AdminerRustserv();
+}
+
+// Première visite (ou après déconnexion) : connexion automatique.
+if (!isset($_GET['username']) && empty($_POST)) {
+    $_POST['auth'] = [
+        'driver' => 'server',
+        'server' => '127.0.0.1:{{ port }}',
+        'username' => 'root',
+        'password' => '',
+        'db' => '',
+    ];
+}
+
+include '{{ adminer_php }}';

@@ -143,6 +143,19 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   (`phpVersion` 80300, `excludePaths.analyse` + `scanDirectories` vendor). JSON extrait entre le premier
   `{` et le dernier `}` (des avertissements peuvent précéder). Rapport commun `Rapport`.
 
+## Gestion des bases : Adminer
+
+- Choix validé par l'utilisateur (2026-11-22) : **Adminer** seul (phpMyAdmin 5.2.3 limité à PHP < 8.4,
+  HeidiSQL écarté pour l'instant). Catalogue : fichier unique `adminer.php` (SHA256 = digest GitHub).
+- Servi sous `/adminer/` (pas dans www/) par le vhost par défaut, avec le PHP par défaut, **accès
+  local uniquement** (nginx `allow 127.0.0.1; deny all;`, Apache `Require local`) car connecté en root.
+- Lanceur généré `etc/adminer/index.php` (gabarit `adminer.php.j2`) : `adminer_object()` étend
+  `\Adminer\Adminer` (credentials, `login()` → true pour root sans mot de passe,
+  `verifyLoginToken()` → false) et simule `$_POST['auth']` à la première visite → redirection 303
+  vers `?server=127.0.0.1:<port>&username=root`. Apache : `Alias` + `ProxyFCGISetEnvIf` SCRIPT_FILENAME
+  dans le `<Directory>` (le réglage global DOCUMENT_ROOT+SCRIPT_NAME ne convient pas à un Alias).
+- Bouton « Gérer les bases » (carte MariaDB) : installe Adminer, démarre MariaDB + web si besoin.
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.

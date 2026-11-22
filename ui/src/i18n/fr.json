@@ -55,7 +55,10 @@
     "tout_redemarrer": "Tout redémarrer",
     "tout_redemarrer_aide": "Redémarre uniquement les services en marche, avec les réglages et fichiers de configuration actuels.",
     "reglages_en_attente": "Des réglages ont été modifiés pendant que les services tournaient : redémarrez-les pour les appliquer.",
-    "appliquer_maintenant": "Redémarrer maintenant"
+    "appliquer_maintenant": "Redémarrer maintenant",
+    "adminer": "Gérer les bases",
+    "adminer_ouverture": "Ouverture…",
+    "adminer_aide": "Ouvre Adminer dans le navigateur, déjà connecté à MariaDB (installé et démarré automatiquement si besoin). Accessible depuis ce PC uniquement."
   },
   "php": {
     "rechercher": "Rechercher des mises à jour",

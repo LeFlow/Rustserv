@@ -11,12 +11,14 @@ use serde::Serialize;
 pub const NGINX_CONF: &str = "nginx.conf.j2";
 pub const HTTPD_CONF: &str = "httpd.conf.j2";
 pub const MY_INI: &str = "my.ini.j2";
+pub const ADMINER_PHP: &str = "adminer.php.j2";
 
 fn embedded(name: &str) -> Option<&'static str> {
     match name {
         NGINX_CONF => Some(include_str!("nginx.conf.j2")),
         HTTPD_CONF => Some(include_str!("httpd.conf.j2")),
         MY_INI => Some(include_str!("my.ini.j2")),
+        ADMINER_PHP => Some(include_str!("adminer.php.j2")),
         _ => None,
     }
 }

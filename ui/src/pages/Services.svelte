@@ -73,6 +73,20 @@
     }
   }
 
+  /** Ouvre Adminer (installé et services démarrés automatiquement si besoin). */
+  async function gererBases() {
+    erreur = null;
+    occupe.adminer = true;
+    try {
+      await openUrl(await api.adminerOpen());
+    } catch (e) {
+      erreur = tErreur(e);
+    } finally {
+      occupe.adminer = false;
+      await charger();
+    }
+  }
+
   async function basculerJournal(g: Groupe) {
     journaux[g] = journaux[g] == null ? await api.serviceLog(g) : null;
   }
@@ -137,6 +151,9 @@
           <button disabled={occupe[g.group] || g.state.etat === "arret"} onclick={() => action(g.group, api.serviceStop)}>■ {t("actions.arreter")}</button>
         {:else}
           <button class="primaire" disabled={occupe[g.group]} onclick={() => action(g.group, api.serviceStart)}>▶ {t("actions.demarrer")}</button>
+        {/if}
+        {#if g.group === "mariadb" && g.installed}
+          <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={gererBases}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
         {/if}
         <button class="lien" onclick={() => basculerJournal(g.group)}>{journaux[g.group] == null ? t("services.voir_journal") : t("services.masquer_journal")}</button>
       </div>

@@ -2,6 +2,19 @@
   "schema": 1,
   "updated": "2026-11-22",
   "packages": {
+    "adminer": {
+      "name": "Adminer",
+      "category": "database",
+      "homepage": "https://www.adminer.org/",
+      "releases": [
+        {
+          "version": "6.3.1",
+          "url": "https://github.com/vrana/adminer/releases/download/v6.3.1/adminer-6.3.1.php",
+          "sha256": "a9aed04e4e68c4e46283804a69ee70cad4fbf23203b46470b760868b2fd9bd76",
+          "file": "adminer.php"
+        }
+      ]
+    },
     "composer": {
       "name": "Composer",
       "category": "tool",
