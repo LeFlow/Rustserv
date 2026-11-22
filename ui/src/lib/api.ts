@@ -101,7 +101,51 @@ export interface SettingsView {
   warning: ErreurBackend | null;
 }
 
+// ------------------------------------------------------------ PHP & sites
+
+export interface PhpVersionView {
+  version: string;
+  branch: string;
+  active: boolean;
+  default: boolean;
+  pinned: boolean;
+  running: boolean;
+  ports: number[];
+  update: string | null;
+  sites: string[];
+  ini: string;
+}
+
+export interface PhpView {
+  versions: PhpVersionView[];
+  last_check: number | null;
+}
+
+export interface MigrationReport {
+  ini_repris: boolean;
+  dll_copiees: string[];
+}
+
+export interface SiteView {
+  name: string;
+  host: string;
+  dir: string;
+  root: string;
+  php_choice: string | null;
+  php_version: string | null;
+  php_missing: boolean;
+  local_url: string;
+}
+
 export const api = {
+  phpOverview: () => invoke<PhpView>("php_overview"),
+  phpSetDefault: (branch: string) => invoke<void>("php_set_default", { branch }),
+  phpPin: (branch: string, version: string | null) => invoke<void>("php_pin", { branch, version }),
+  phpCheckUpdates: () => invoke<string[]>("php_check_updates"),
+  phpUpgrade: (branch: string, keepOld: boolean) => invoke<MigrationReport>("php_upgrade", { branch, keepOld }),
+  sitesList: () => invoke<SiteView[]>("sites_list"),
+  siteSetPhp: (site: string, branch: string | null) => invoke<void>("site_set_php", { site, branch }),
+
   servicesOverview: () => invoke<GroupView[]>("services_overview"),
   serviceStart: (group: Groupe) => invoke<void>("service_start", { group }),
   serviceStop: (group: Groupe) => invoke<void>("service_stop", { group }),

@@ -15,6 +15,7 @@
 mod download;
 mod extract;
 pub mod install;
+pub mod php_remote;
 pub mod version;
 
 pub use download::{download_verified, sha256_file};
@@ -192,6 +193,31 @@ impl Catalog {
             .ok_or_else(|| Error::VersionInconnue { id: id.into(), version: version.into() })
     }
 
+    /// Ajoute au paquet les versions absentes du catalogue (versions connues inchangées).
+    /// Renvoie les versions ajoutées. Le catalogue reste valide (vérifié).
+    pub fn merge(&mut self, id: &str, releases: Vec<Release>) -> Result<Vec<String>> {
+        let pkg = self.packages.get_mut(id).ok_or_else(|| Error::PaquetInconnu { id: id.into() })?;
+        let mut ajoutees = Vec::new();
+        for r in releases {
+            if !pkg.releases.iter().any(|x| x.version == r.version) {
+                ajoutees.push(r.version.clone());
+                pkg.releases.push(r);
+            }
+        }
+        pkg.releases.sort_by(|a, b| version::cmp(&b.version, &a.version));
+        let problemes = self.validate();
+        if !problemes.is_empty() {
+            return Err(Error::CatalogueInvalide { problemes });
+        }
+        Ok(ajoutees)
+    }
+
+    /// Enregistre le catalogue (JSON indenté).
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let json = serde_json::to_string_pretty(self).map_err(|e| Error::Interne(e.to_string()))?;
+        std::fs::write(path, json).map_err(|e| Error::fichier(path, e))
+    }
+
     /// Version la plus récente d'un paquet, éventuellement limitée à une branche.
     pub fn latest(&self, id: &str, branch: Option<&str>) -> Option<&Release> {
         self.packages
@@ -273,6 +299,26 @@ mod tests {
     fn rejette_format_inconnu_et_json_casse() {
         assert_eq!(Catalog::parse(r#"{"schema":2,"packages":{}}"#, "t").unwrap_err().code(), "catalogue.invalide");
         assert_eq!(Catalog::parse("{ pas du json", "t").unwrap_err().code(), "json.invalide");
+    }
+
+    #[test]
+    fn fusion_de_nouvelles_versions() {
+        let mut cat = Catalog::parse(MINI, "test").unwrap();
+        let mut nouvelle = cat.release("php", "8.3.15").unwrap().clone();
+        nouvelle.version = "8.3.16".into();
+        let connue = cat.release("php", "8.3.9").unwrap().clone();
+        let ajout = cat.merge("php", vec![nouvelle.clone(), connue]).unwrap();
+        assert_eq!(ajout, ["8.3.16"]);
+        assert_eq!(cat.latest("php", Some("8.3")).unwrap().version, "8.3.16");
+        // Une entrée invalide est refusée.
+        nouvelle.version = "8.3.17".into();
+        nouvelle.sha256 = "court".into();
+        assert!(cat.merge("php", vec![nouvelle]).is_err());
+
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join("c.json");
+        Catalog::parse(MINI, "test").unwrap().save(&f).unwrap();
+        assert!(Catalog::load(&f).is_ok(), "aller-retour fichier");
     }
 
     #[test]

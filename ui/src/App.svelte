@@ -10,7 +10,9 @@
   import { api, type AppInfo } from "./lib/api";
   import Catalogue from "./pages/Catalogue.svelte";
   import Parametres from "./pages/Parametres.svelte";
+  import Php from "./pages/Php.svelte";
   import Services from "./pages/Services.svelte";
+  import Sites from "./pages/Sites.svelte";
 
   type Page = "services" | "php" | "sites" | "catalogue" | "parametres";
   const pages: Page[] = ["services", "php", "sites", "catalogue", "parametres"];
@@ -38,6 +40,10 @@
     {#if erreur}<p class="erreur">{erreur}</p>{/if}
     {#if page === "services"}
       <Services allerAuCatalogue={() => (page = "catalogue")} />
+    {:else if page === "php"}
+      <Php allerAuCatalogue={() => (page = "catalogue")} />
+    {:else if page === "sites"}
+      <Sites />
     {:else if page === "catalogue"}
       <Catalogue />
     {:else if page === "parametres"}

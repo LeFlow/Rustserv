@@ -59,6 +59,13 @@ http {
         root "{{ www }}";
         index index.php index.html index.htm;
         autoindex on;
+{%- for s in sites %}
+
+        # http://localhost/{{ s.dir_name }}/ utilise le PHP du site ({{ s.php_version }})
+        location ^~ /{{ s.dir_name }}/ {
+{{- php(s.upstream, server_dir) | indent(4) }}
+        }
+{%- endfor %}
 {%- if default_upstream %}
 {{ php(default_upstream, server_dir) }}
 {%- endif %}

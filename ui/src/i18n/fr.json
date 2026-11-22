@@ -51,6 +51,45 @@
       "erreur": "Erreur"
     }
   },
+  "php": {
+    "rechercher": "Rechercher des mises à jour",
+    "recherche_en_cours": "Recherche…",
+    "derniere_recherche": "Dernière recherche à {heure}",
+    "installer_autre": "Installer une autre version…",
+    "nouvelles": "Nouvelles versions disponibles : {versions}",
+    "a_jour": "Toutes les branches sont à jour.",
+    "aucune": "Aucune version de PHP n'est installée. Installez-en une depuis la page Catalogue.",
+    "col_version": "Version",
+    "col_etat": "État",
+    "col_sites": "Sites",
+    "col_ports": "Ports",
+    "par_defaut": "par défaut",
+    "epinglee": "épinglée",
+    "inactive": "Inactive (une autre version de la branche est utilisée)",
+    "definir_defaut": "Par défaut",
+    "utiliser": "Utiliser cette version",
+    "desepingler": "Suivre la plus récente",
+    "maj_dispo": "PHP {version} est disponible",
+    "conserver": "conserver {version}",
+    "mettre_a_jour": "Mettre à jour vers {version}",
+    "validation": "Installation et vérification…",
+    "mis_a_jour": "PHP {de} a été mis à jour vers {vers} : php.ini et extensions repris.",
+    "dll_copiees": "DLL reprises : {liste}.",
+    "explication": "Une seule version par branche (7.4, 8.3…) est utilisée à la fois : la plus récente, sauf si vous en épinglez une. Les sites choisissent une branche : ils suivent donc automatiquement les mises à jour."
+  },
+  "sites": {
+    "actualiser": "Actualiser",
+    "aide": "Chaque dossier de www/ est un site.",
+    "aucun": "Aucun site : créez un dossier dans www/ (par exemple www/monsite).",
+    "col_site": "Site",
+    "col_dossier": "Racine web",
+    "php_defaut": "PHP par défaut ({version})",
+    "non_installe": "non installé",
+    "php_manquant": "PHP {branche} n'est pas installé : le site utilise PHP {version}.",
+    "application": "Application…",
+    "ouvrir": "Ouvrir",
+    "domaine_bientot": "domaine actif en phase 4"
+  },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
     "enregistre": "Réglages enregistrés. Redémarrez les services concernés pour les appliquer.",
@@ -116,6 +155,9 @@
       "executable": "Le programme « {chemin} » est introuvable. Réinstallez-le depuis le catalogue.",
       "aucune_version": "Aucune version de {id} n'est installée. Installez-en une depuis la page Catalogue.",
       "base_init": "La création du dossier de données MariaDB a échoué :\n{detail}"
+    },
+    "php": {
+      "invalide": "PHP {version} ne démarre pas correctement avec son php.ini :\n{detail}"
     },
     "reglages": {
       "invalides": "Réglages non enregistrés : {detail}."

@@ -132,10 +132,19 @@ pub fn catalog_cancel(state: State<'_, AppState>, package: String, version: Stri
 #[tauri::command]
 pub fn catalog_uninstall(state: State<'_, AppState>, package: String, version: String) -> Result<()> {
     // Refus si un service utilise cette version (Windows bloquerait la suppression à moitié).
-    let installed = state.installer.installed()?;
-    let en_cours = state.orchestrator.overview(&state.settings(), &installed).into_iter().any(|g| {
-        g.software == package && g.version.as_deref() == Some(version.as_str()) && !matches!(g.state, ServiceState::Arrete | ServiceState::Erreur { .. })
-    });
+    let actif = |s: &ServiceState| !matches!(s, ServiceState::Arrete | ServiceState::Erreur { .. });
+    let en_cours = if package == "php" {
+        // Plusieurs versions de PHP peuvent tourner : on regarde les processus de celle-ci.
+        let prefix = format!("php-{version}#");
+        state.supervisor().states().iter().any(|s| s.id.starts_with(&prefix) && actif(&s.state))
+    } else {
+        let installed = state.installer.installed()?;
+        state
+            .orchestrator
+            .overview(&state.settings(), &installed)
+            .into_iter()
+            .any(|g| g.software == package && g.version.as_deref() == Some(version.as_str()) && actif(&g.state))
+    };
     if en_cours {
         return Err(Error::ServiceDejaDemarre { service: format!("{package} {version}") });
     }

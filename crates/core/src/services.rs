@@ -38,6 +38,9 @@ struct Upstream {
 #[derive(Debug, Serialize)]
 struct SiteCtx {
     name: String,
+    /// Nom réel du dossier (casse d'origine) pour l'accès http://localhost/<dossier>/.
+    dir_name: String,
+    dir: String,
     host: String,
     root: String,
     upstream: String,
@@ -84,15 +87,67 @@ impl<'a> Stack<'a> {
             .ok_or_else(|| Error::AucuneVersion { id: package.into() })
     }
 
-    /// PHP par défaut (None si aucun PHP installé : le serveur web sert alors du statique).
-    pub fn default_php(&self) -> Option<&'a InstalledPackage> {
-        self.pick("php", self.settings.versions.php.as_deref()).ok()
+    /// Versions de PHP installées.
+    pub fn php_installed(&self) -> impl Iterator<Item = &'a InstalledPackage> + 'a {
+        self.installed.iter().filter(|p| p.package == "php")
     }
 
-    /// Versions de PHP nécessaires (pour l'instant : la version par défaut ;
-    /// la phase 2 ajoutera les versions choisies par site).
+    /// Version **active** d'une branche : la version épinglée si elle est installée,
+    /// sinon la plus récente installée de la branche.
+    /// Une seule version par branche tourne à la fois (les ports dépendent de la branche).
+    pub fn php_for_branch(&self, branch: &str) -> Option<&'a InstalledPackage> {
+        let dans_branche = || self.php_installed().filter(move |p| version::branch(&p.version) == branch);
+        if let Some(pin) = self.settings.php_pins.get(branch) {
+            if let Some(p) = dans_branche().find(|p| &p.version == pin) {
+                return Some(p);
+            }
+        }
+        dans_branche().max_by(|a, b| version::cmp(&a.version, &b.version))
+    }
+
+    /// Résout un choix « 8.3 » ou « 8.3.37 » vers la version active de la branche.
+    pub fn resolve_php(&self, choix: &str) -> Option<&'a InstalledPackage> {
+        self.php_for_branch(&version::branch(choix))
+    }
+
+    /// PHP par défaut (None si aucun PHP installé : le serveur web sert alors du statique).
+    pub fn default_php(&self) -> Option<&'a InstalledPackage> {
+        self.settings
+            .versions
+            .php
+            .as_deref()
+            .and_then(|c| self.resolve_php(c))
+            .or_else(|| self.php_installed().max_by(|a, b| version::cmp(&a.version, &b.version)))
+            .and_then(|p| self.php_for_branch(&version::branch(&p.version)))
+    }
+
+    /// PHP d'un site : son choix s'il est installé, sinon le PHP par défaut.
+    pub fn site_php(&self, site: &str) -> Option<&'a InstalledPackage> {
+        self.settings.site_php.get(site).and_then(|c| self.resolve_php(c)).or_else(|| self.default_php())
+    }
+
+    /// Versions de PHP nécessaires : la version par défaut + celles des sites existants.
     pub fn php_needed(&self) -> Vec<&'a InstalledPackage> {
-        self.default_php().into_iter().collect()
+        let mut v: Vec<&InstalledPackage> = self.default_php().into_iter().collect();
+        if let Ok(sites) = sites::discover(self.paths, &self.settings.tld) {
+            for s in sites {
+                if let Some(p) = self.site_php(&s.name) {
+                    if !v.iter().any(|x| x.version == p.version) {
+                        v.push(p);
+                    }
+                }
+            }
+        }
+        v.sort_by(|a, b| version::cmp(&b.version, &a.version));
+        v
+    }
+
+    /// Identifiants de tous les processus php-cgi nécessaires.
+    pub fn php_service_ids(&self) -> Vec<String> {
+        self.php_needed()
+            .iter()
+            .flat_map(|p| (0..self.settings.php_pool_size as usize).map(move |n| php_service_id(&p.version, n)))
+            .collect()
     }
 
     /// Specs du pool php-cgi d'une version (php.ini créé au besoin).
@@ -131,19 +186,21 @@ impl<'a> Stack<'a> {
             .map(|p| Upstream { name: upstream_name(&p.version), ports: pool_ports(&p.version, self.settings.php_pool_size) })
             .collect();
         let default = self.default_php();
-        let sites = match default {
-            Some(php) => sites::discover(self.paths, &self.settings.tld)?
-                .into_iter()
-                .map(|s| SiteCtx {
+        let sites = sites::discover(self.paths, &self.settings.tld)?
+            .into_iter()
+            .filter_map(|s| {
+                let php = self.site_php(&s.name)?;
+                Some(SiteCtx {
+                    dir_name: s.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    dir: slash(&s.dir),
                     name: s.name,
                     host: s.host,
                     root: slash(&s.root),
                     upstream: upstream_name(&php.version),
                     php_version: php.version.clone(),
                 })
-                .collect(),
-            None => vec![],
-        };
+            })
+            .collect();
         Ok(WebContext {
             server_dir: slash(&server.path),
             www: slash(&self.paths.www()),
@@ -340,8 +397,43 @@ mod tests {
         assert_eq!(st.pick("php", Some("8.3.9")).unwrap().version, "8.3.9");
         assert_eq!(st.pick("php", Some("5.6.0")).unwrap().version, "8.3.15", "repli sur la plus récente");
         assert_eq!(st.pick("mariadb", None).unwrap_err().code(), "service.aucune_version");
+        // Le choix « 8.3.9 » désigne la branche 8.3 → version la plus récente…
         settings.versions.php = Some("8.3.9".into());
+        assert_eq!(Stack::new(&paths, &settings, &installed).default_php().unwrap().version, "8.3.15");
+        // … sauf si une version est épinglée pour la branche.
+        settings.php_pins.insert("8.3".into(), "8.3.9".into());
         assert_eq!(Stack::new(&paths, &settings, &installed).default_php().unwrap().version, "8.3.9");
+    }
+
+    #[test]
+    fn php_par_site_et_versions_necessaires() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        for s in ["ancien", "moderne", "autre"] {
+            std::fs::create_dir_all(paths.www().join(s)).unwrap();
+        }
+        let installed = vec![pkg("php", "7.4.33", t.path()), pkg("php", "8.3.37", t.path()), pkg("php", "8.2.36", t.path())];
+        let mut settings = Settings::default();
+        settings.versions.php = Some("8.3".into());
+        settings.site_php.insert("ancien".into(), "7.4".into());
+        settings.site_php.insert("autre".into(), "5.6".into()); // non installée → défaut
+        settings.site_php.insert("supprime".into(), "8.2".into()); // site absent → ignoré
+        let st = Stack::new(&paths, &settings, &installed);
+
+        assert_eq!(st.site_php("ancien").unwrap().version, "7.4.33");
+        assert_eq!(st.site_php("moderne").unwrap().version, "8.3.37");
+        assert_eq!(st.site_php("autre").unwrap().version, "8.3.37");
+        let needed: Vec<_> = st.php_needed().iter().map(|p| p.version.clone()).collect();
+        assert_eq!(needed, ["8.3.37", "7.4.33"], "8.2 n'est utilisé par aucun site existant");
+        assert_eq!(st.php_service_ids().len(), 8);
+
+        // Le gabarit route chaque site (domaine et /dossier/) vers son PHP.
+        let n = templates::render(&paths, templates::NGINX_CONF, st.web_context(&pkg("nginx", "1.30.7", t.path())).unwrap()).unwrap();
+        assert!(n.contains("upstream php_7_4_33 {") && n.contains("server 127.0.0.1:9740;"));
+        assert!(n.contains("location ^~ /ancien/ {"));
+        let bloc_ancien = &n[n.find("location ^~ /ancien/").unwrap()..];
+        assert!(bloc_ancien[..bloc_ancien.find("location ^~ /autre/").unwrap_or(bloc_ancien.len())].contains("fastcgi_pass php_7_4_33;"));
     }
 
     #[test]

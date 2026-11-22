@@ -34,6 +34,21 @@ async fn toutes_les_urls_du_catalogue_repondent() {
     assert!(echecs.is_empty(), "versions injoignables : {echecs:?}");
 }
 
+/// releases.json de windows.php.net est lisible et cohérent avec le catalogue.
+#[tokio::test]
+#[ignore]
+async fn releases_php_officielles() {
+    let client = reqwest::Client::builder().user_agent("Rustserv-test").build().unwrap();
+    let r = rustserv_core::catalog::php_remote::fetch(&client).await.unwrap();
+    for x in &r {
+        println!("PHP {} ({}) {}", x.version, x.build.as_ref().unwrap().compiler, x.url);
+    }
+    assert!(r.iter().any(|x| x.branch.as_deref() == Some("8.3")));
+    let mut cat = Catalog::embedded().unwrap();
+    let ajout = cat.merge("php", r).unwrap();
+    println!("versions absentes du catalogue intégré : {ajout:?}");
+}
+
 /// Installation réelle de Nginx dans un dossier temporaire.
 #[tokio::test]
 #[ignore]

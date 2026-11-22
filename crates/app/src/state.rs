@@ -19,6 +19,8 @@ pub struct AppState {
     /// Problèmes rencontrés au démarrage (catalog.json, rustserv.json illisibles…).
     pub catalog_warning: Option<serde_json::Value>,
     pub settings_warning: Option<serde_json::Value>,
+    /// Dernière recherche de mises à jour PHP (session courante).
+    pub last_php_check: Mutex<Option<u64>>,
 }
 
 impl AppState {
@@ -50,6 +52,7 @@ impl AppState {
             jobs: Mutex::new(HashMap::new()),
             catalog_warning,
             settings_warning,
+            last_php_check: Mutex::new(None),
         })
     }
 

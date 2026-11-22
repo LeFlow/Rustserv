@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod php_commands;
 mod state;
 mod tray;
 
@@ -42,6 +43,13 @@ fn main() {
             commands::service_log,
             commands::settings_get,
             commands::settings_save,
+            php_commands::php_overview,
+            php_commands::php_set_default,
+            php_commands::php_pin,
+            php_commands::php_check_updates,
+            php_commands::php_upgrade,
+            php_commands::sites_list,
+            php_commands::site_set_php,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {

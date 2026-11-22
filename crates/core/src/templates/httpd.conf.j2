@@ -96,6 +96,14 @@ ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
         SetHandler "proxy:balancer://{{ default_upstream }}/"
     </FilesMatch>
 {%- endif %}
+{%- for s in sites %}
+    # http://localhost/{{ s.dir_name }}/ utilise le PHP du site ({{ s.php_version }})
+    <Directory "{{ s.dir }}">
+        <FilesMatch "\.php$">
+            SetHandler "proxy:balancer://{{ s.upstream }}/"
+        </FilesMatch>
+    </Directory>
+{%- endfor %}
 </VirtualHost>
 {% for s in sites %}
 # Site {{ s.name }} (PHP {{ s.php_version }})

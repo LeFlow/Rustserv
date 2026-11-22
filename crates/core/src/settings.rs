@@ -6,6 +6,7 @@
 use crate::error::{Error, Result};
 use crate::paths::Paths;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -36,7 +37,8 @@ pub struct Versions {
     pub nginx: Option<String>,
     pub apache: Option<String>,
     pub mariadb: Option<String>,
-    /// Version de PHP par défaut des sites (version complète, ex. 8.3.37).
+    /// **Branche** de PHP par défaut des sites (ex. « 8.3 »). Une version complète
+    /// (« 8.3.37 », anciens réglages) est acceptée et ramenée à sa branche.
     pub php: Option<String>,
 }
 
@@ -52,6 +54,10 @@ pub struct Settings {
     pub tld: String,
     /// Fuseau horaire PHP par défaut (date.timezone).
     pub timezone: String,
+    /// Branche de PHP choisie par site (nom du site → « 7.4 »). Absent = PHP par défaut.
+    pub site_php: BTreeMap<String, String>,
+    /// Version épinglée par branche (« 8.3 » → « 8.3.36 »). Absent = la plus récente installée.
+    pub php_pins: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -63,6 +69,8 @@ impl Default for Settings {
             php_pool_size: 4,
             tld: "test".into(),
             timezone: "Europe/Paris".into(),
+            site_php: BTreeMap::new(),
+            php_pins: BTreeMap::new(),
         }
     }
 }

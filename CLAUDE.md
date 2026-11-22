@@ -64,6 +64,24 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 - php.ini : créé une seule fois depuis php.ini-development, jamais écrasé ensuite.
 - Groupes UI (`orchestrator.rs`) : démarrer `web` démarre `php` ; arrêter `php` arrête `web`.
 
+## PHP multi-versions (phase 2)
+
+- Les choix se font par **branche** (« 8.3 ») : `settings.versions.php` (défaut), `settings.site_php`
+  (site → branche). Une seule version **active** par branche (`Stack::php_for_branch`) : celle de
+  `settings.php_pins[branche]` si installée, sinon la plus récente installée. Les ports dépendent
+  de la branche, donc deux versions d'une même branche ne tournent jamais ensemble.
+- `Stack::php_needed` = défaut + PHP des sites existants ; seules ces versions tournent.
+- `Orchestrator::apply` reconfigure à chaud après un changement (arrête les pools inutiles,
+  démarre les nouveaux, redémarre le serveur web) **sans démarrer ce qui était arrêté**.
+- http://localhost/<dossier>/ utilise déjà le PHP du site (nginx : `location ^~ /<dossier>/`
+  imbriquée ; Apache : `<Directory>` + `SetHandler` dans le vhost par défaut).
+- Mise à jour de branche : `Orchestrator::upgrade_php_branch` (install → `php::migrate_ini`
+  (remplace les chemins de l'ancien dossier) → `php::copy_extra_dlls` (DLL absentes de la nouvelle
+  version) → `php::check` (`php -m`, tout « PHP Startup » = échec) → apply → suppression
+  facultative). Échec de validation ⇒ retour arrière complet. L'ancien php.ini reste dans etc/.
+- Nouvelles versions : `catalog::php_remote` lit releases.json (NTS x64), `Catalog::merge` +
+  `save` dans catalog.json. Recherche automatique une fois par session à l'ouverture de la page PHP.
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
@@ -102,8 +120,14 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 Tests réels (binaires téléchargés dans `target/pile-test`, ~150 Mo) :
 `cargo test -p rustserv-core --test pile_reelle -- --ignored --nocapture --test-threads=1`
 
+### Phase 2 — PHP multi-versions ✅ (2026-11-22)
+- [x] Plusieurs versions en parallèle, une par branche, pool par branche
+- [x] Association site → branche (page Sites), PHP par défaut, épinglage (page PHP)
+- [x] Mise à jour de branche en un clic avec reprise php.ini/DLL, validation et retour arrière
+- [x] Détection des nouvelles versions (windows.php.net/releases.json)
+- Tests réels : `multi_versions_php_par_site`, `mise_a_jour_de_branche_reelle` (dossier `target/pile-maj`)
+
 ### Phases suivantes
-- [ ] Phase 2 — PHP multi-versions
 - [ ] Phase 3 — Extensions PHP
 - [ ] Phase 4 — Sites, hosts, HTTPS, terminal
 - [ ] Phase 5 — Tests de rétrocompatibilité

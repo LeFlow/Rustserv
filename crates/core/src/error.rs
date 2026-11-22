@@ -48,6 +48,10 @@ pub enum Error {
     #[error("configuration de {service} invalide : {detail}")]
     ConfigInvalide { service: String, detail: String },
 
+    /// PHP ne démarre pas proprement avec ce php.ini (extension introuvable…).
+    #[error("PHP {version} invalide : {detail}")]
+    PhpInvalide { version: String, detail: String },
+
     /// Réglages incohérents (ports en double…).
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
@@ -142,6 +146,7 @@ impl Error {
             Error::Gabarit { .. } => "config.gabarit",
             Error::BaseInit { .. } => "service.base_init",
             Error::ReglagesInvalides { .. } => "reglages.invalides",
+            Error::PhpInvalide { .. } => "php.invalide",
             Error::Fichier { .. } => "fichier.acces",
             Error::Io(_) => "io.generique",
             Error::JsonInvalide { .. } => "json.invalide",
@@ -185,6 +190,7 @@ impl Error {
             Error::ConfigInvalide { service, detail } => json!({ "service": service, "detail": detail }),
             Error::Gabarit { nom, detail } => json!({ "nom": nom, "detail": detail }),
             Error::BaseInit { detail } | Error::ReglagesInvalides { detail } => json!({ "detail": detail }),
+            Error::PhpInvalide { version, detail } => json!({ "version": version, "detail": detail }),
             Error::VcRuntime { requis, installe } => json!({
                 "requis": requis,
                 "installe": installe.clone().unwrap_or_else(|| "aucun".into()),
@@ -263,6 +269,7 @@ mod tests {
             Error::Gabarit { nom: s(), detail: s() },
             Error::BaseInit { detail: s() },
             Error::ReglagesInvalides { detail: s() },
+            Error::PhpInvalide { version: s(), detail: s() },
             Error::fichier("x", std::io::Error::other("x")),
             Error::Io(std::io::Error::other("x")),
             Error::JsonInvalide { fichier: s(), detail: s() },

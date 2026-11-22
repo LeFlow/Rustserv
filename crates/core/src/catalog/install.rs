@@ -73,6 +73,11 @@ impl Installer {
         Self { paths, client }
     }
 
+    /// Client HTTP partagé (proxy système, user-agent Rustserv).
+    pub fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
     /// Dossier d'installation : `bin/<paquet>/<paquet>-<version>`.
     pub fn install_dir(&self, package: &str, version: &str) -> PathBuf {
         self.paths.bin().join(package).join(format!("{package}-{version}"))
