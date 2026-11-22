@@ -204,7 +204,7 @@
   .pastille.erreur { background: var(--danger); }
   @keyframes clignote { 50% { opacity: 0.4; } }
   .pool { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin: 10px 0 0 26px; font-size: 12px; }
-  .bas { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .bas { display: flex; justify-content: flex-start; margin: 8px 0 0 26px; }
   .version-pool { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; }
   .version-pool .mono { margin-right: 4px; }
   .erreur { color: var(--danger); white-space: pre-wrap; font-family: inherit; margin: 10px 0 0; }
