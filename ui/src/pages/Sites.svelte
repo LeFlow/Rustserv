@@ -215,11 +215,13 @@
   .bandeau { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-card); }
   .carte { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
   .https { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; }
-  table.carte { width: 100%; border-collapse: collapse; overflow: hidden; }
+  /* Pas d'overflow: hidden (il couperait le menu « Ouvrir ») : coins arrondis via border-collapse: separate. */
+  table.carte { width: 100%; border-collapse: separate; border-spacing: 0; }
   th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
   td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
   select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
   .menu { position: relative; display: inline-block; }
+  .menu > button { white-space: nowrap; }
   .menu-liste { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 260px; display: flex; flex-direction: column; padding: 6px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
   .menu-liste button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; white-space: nowrap; }
   .menu-liste button:hover { background: var(--bg-hover); }
