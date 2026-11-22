@@ -243,6 +243,49 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Groupes actuellement actifs (en marche ou en transition).
+    pub fn running_groups(&self) -> Vec<Group> {
+        let states = self.supervisor.states();
+        let actif = |pred: &dyn Fn(&str) -> bool| {
+            states.iter().any(|s| pred(&s.id) && !matches!(s.state, ServiceState::Arrete | ServiceState::Erreur { .. }))
+        };
+        let mut g = Vec::new();
+        if actif(&|id| id == MARIADB) {
+            g.push(Group::Mariadb);
+        }
+        if actif(&|id| id.starts_with("php-")) {
+            g.push(Group::Php);
+        }
+        if actif(&|id| id == NGINX || id == APACHE) {
+            g.push(Group::Web);
+        }
+        g
+    }
+
+    /// Redémarre **uniquement ce qui tournait**, avec les réglages et configurations
+    /// actuels (ports, serveur web, php.ini modifié à la main…). Ordre : arrêt complet,
+    /// puis MariaDB, puis PHP + serveur web. Renvoie les groupes redémarrés ;
+    /// continue même si un groupe échoue et renvoie la première erreur.
+    pub async fn restart_running(&self, settings: &Settings, installed: &[InstalledPackage]) -> Result<Vec<Group>> {
+        let groupes = self.running_groups();
+        if groupes.is_empty() {
+            return Ok(groupes);
+        }
+        tracing::info!(?groupes, "redémarrage des services en marche");
+        self.supervisor.stop_all().await;
+        let mut premiere = None;
+        for g in [Group::Mariadb, Group::Web, Group::Php] {
+            // Le web démarre PHP lui-même : PHP seul seulement s'il tournait sans serveur web.
+            let lancer = groupes.contains(&g) && !(g == Group::Php && groupes.contains(&Group::Web));
+            if lancer {
+                if let Err(e) = self.start(g, settings, installed).await {
+                    premiere.get_or_insert(e);
+                }
+            }
+        }
+        premiere.map_or(Ok(groupes), Err)
+    }
+
     /// Démarre tout : MariaDB, puis PHP, puis le serveur web.
     /// Continue même si un groupe échoue et renvoie la première erreur.
     pub async fn start_all(&self, settings: &Settings, installed: &[InstalledPackage]) -> Result<()> {

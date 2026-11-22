@@ -106,6 +106,8 @@ export interface SettingsView {
 export interface SaveResult {
   /** Le domaine des sites a changé : les domaines doivent être redéclarés dans Windows. */
   domaine_change: boolean;
+  /** Des services tournent avec les anciens réglages. */
+  redemarrage_requis: boolean;
 }
 
 // ------------------------------------------------------------ PHP & sites
@@ -261,6 +263,8 @@ export const api = {
   serviceRestart: (group: Groupe) => invoke<void>("service_restart", { group }),
   startAll: () => invoke<void>("services_start_all"),
   stopAll: () => invoke<void>("services_stop_all"),
+  restartAll: () => invoke<Groupe[]>("services_restart_all"),
+  restartPending: () => invoke<boolean>("services_restart_pending"),
   serviceLog: (group: Groupe) => invoke<string>("service_log", { group }),
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>
     listen<StatusEvent>("service-status", (e) => cb(e.payload)),

@@ -8,6 +8,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
   import { api, type GroupView, type Groupe } from "../lib/api";
+  import { formatPorts, groupesPhp } from "../lib/format";
 
   let { allerAuCatalogue }: { allerAuCatalogue: () => void } = $props();
 
@@ -16,12 +17,15 @@
   /** Groupe pour lequel une action est en cours (boutons désactivés). */
   let occupe = $state<Record<string, boolean>>({});
   let toutOccupe = $state(false);
+  /** Réglages enregistrés pendant que des services tournaient. */
+  let enAttente = $state(false);
   /** Journal affiché par groupe (null = replié). */
   let journaux = $state<Record<string, string | null>>({});
 
   async function charger() {
     try {
       groupes = await api.servicesOverview();
+      enAttente = await api.restartPending();
       for (const g of groupes) {
         if (journaux[g.group] != null) journaux[g.group] = await api.serviceLog(g.group);
       }
@@ -88,14 +92,25 @@
   const webPort = $derived(groupes.find((g) => g.group === "web")?.ports[0] ?? 80);
   const urlAccueil = $derived(webPort === 80 ? "http://localhost/" : `http://localhost:${webPort}/`);
   const webEnMarche = $derived(groupes.some((g) => g.group === "web" && enMarche(g)));
+  const unEnMarche = $derived(groupes.some((g) => enMarche(g)));
 </script>
 
 <div class="barre-actions">
   <button class="primaire" disabled={toutOccupe} onclick={() => tout(api.startAll)}>▶ {t("services.tout_demarrer")}</button>
+  {#if unEnMarche}
+    <button disabled={toutOccupe} title={t("services.tout_redemarrer_aide")} onclick={() => tout(async () => { await api.restartAll(); })}>⟳ {t("services.tout_redemarrer")}</button>
+  {/if}
   <button disabled={toutOccupe} onclick={() => tout(api.stopAll)}>■ {t("services.tout_arreter")}</button>
   <span class="espace"></span>
   <button class="lien" disabled={!webEnMarche} onclick={() => openUrl(urlAccueil)}>{t("services.ouvrir", { url: urlAccueil })} ↗</button>
 </div>
+
+{#if enAttente && unEnMarche}
+  <div class="bandeau">
+    <span>⚠ {t("services.reglages_en_attente")}</span>
+    <button class="primaire" disabled={toutOccupe} onclick={() => tout(async () => { await api.restartAll(); })}>⟳ {t("services.appliquer_maintenant")}</button>
+  </div>
+{/if}
 
 {#if erreur}<pre class="erreur">{erreur}</pre>{/if}
 
@@ -107,7 +122,7 @@
         <strong>{t(`services.groupe.${g.group}`, { logiciel: g.software === "apache" ? "Apache" : "Nginx" })}</strong>
         <span class="muted">
           {#if g.version}{g.software} {g.version}{/if}
-          {#if g.ports.length}· {t(g.ports.length > 1 ? "services.ports" : "services.port", { ports: g.ports.length > 1 ? `${g.ports[0]}-${g.ports[g.ports.length - 1]}` : g.ports[0] })}{/if}
+          {#if g.ports.length}· {t(g.ports.length > 1 ? "services.ports" : "services.port", { ports: formatPorts(g.ports) })}{/if}
         </span>
       </div>
       <div class="etat">
@@ -132,9 +147,15 @@
     {/if}
 
     {#if g.group === "php" && g.members.length > 1}
+      <!-- Un groupe de voyants par version de PHP (un voyant par processus). -->
       <div class="pool">
-        {#each g.members as m (m.id)}
-          <span class="membre" title={m.id}><span class="pastille petite {m.state.etat}"></span>{m.id.split("#")[1] ?? m.id}</span>
+        {#each groupesPhp(g.members) as [version, membres] (version)}
+          <span class="version-pool">
+            <span class="mono">PHP {version}</span>
+            {#each membres as m (m.id)}
+              <span class="pastille petite {m.state.etat}" title={`${m.id} : ${t(`services.etat.${m.state.etat}`)}`}></span>
+            {/each}
+          </span>
         {/each}
         <span class="muted">{t("services.pool")}</span>
       </div>
@@ -150,9 +171,10 @@
 <style>
   .barre-actions { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
   .espace { flex: 1; }
+  .bandeau { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 16px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-card); }
   .carte { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; }
   .ligne { display: flex; align-items: center; gap: 14px; }
-  .titre { display: flex; flex-direction: column; min-width: 220px; }
+  .titre { display: flex; flex-direction: column; width: 340px; flex-shrink: 0; }
   .etat { flex: 1; }
   .boutons { display: flex; gap: 6px; align-items: center; }
   .pastille { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
@@ -162,7 +184,8 @@
   .pastille.erreur { background: var(--danger); }
   @keyframes clignote { 50% { opacity: 0.4; } }
   .pool { display: flex; gap: 10px; align-items: center; margin: 10px 0 0 26px; font-size: 12px; }
-  .membre { display: inline-flex; align-items: center; }
+  .version-pool { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; }
+  .version-pool .mono { margin-right: 4px; }
   .erreur { color: var(--danger); white-space: pre-wrap; font-family: inherit; margin: 10px 0 0; }
   .journal { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; margin: 12px 0 4px; }
   .petit { font-size: 11px; margin: 0; }

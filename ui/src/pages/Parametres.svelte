@@ -37,7 +37,9 @@
       // $state.snapshot : copie « simple » de l'objet réactif pour l'envoyer au backend.
       const r = await api.settingsSave($state.snapshot(reglages));
       domaineChange = r.domaine_change;
-      message = { ok: true, texte: t(r.domaine_change ? "parametres.enregistre_domaine" : "parametres.enregistre") };
+      let texte = t(r.domaine_change ? "parametres.enregistre_domaine" : "parametres.enregistre_simple");
+      if (r.redemarrage_requis) texte += " " + t("parametres.redemarrage_requis");
+      message = { ok: true, texte };
     } catch (e) {
       message = { ok: false, texte: tErreur(e) };
     } finally {

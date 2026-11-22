@@ -226,6 +226,8 @@ pub fn settings_get(state: State<'_, AppState>) -> Result<SettingsView> {
 pub struct SaveResult {
     /// Le domaine des sites a changé : les domaines doivent être redéclarés dans Windows.
     domaine_change: bool,
+    /// Des services tournent avec les anciens réglages.
+    redemarrage_requis: bool,
 }
 
 /// Enregistre les réglages. Un changement de domaine est appliqué tout de suite
@@ -234,14 +236,40 @@ pub struct SaveResult {
 #[tauri::command]
 pub async fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<SaveResult> {
     settings.validate()?;
-    let ancien_tld = state.settings().tld;
+    let ancien = state.settings();
     settings.save(&state.paths)?;
-    let domaine_change = settings.tld != ancien_tld;
+    let domaine_change = settings.tld != ancien.tld;
+    // Autres changements (ports, serveur web, pool PHP…) : effectifs au prochain redémarrage.
+    let autres_changements = Settings { tld: settings.tld.clone(), ..ancien.clone() } != settings;
     *state.settings.write().map_err(|e| Error::Interne(e.to_string()))? = settings.clone();
+    let en_marche = !state.orchestrator.running_groups().is_empty();
+    if autres_changements && en_marche {
+        *state.restart_pending.lock().map_err(|e| Error::Interne(e.to_string()))? = true;
+    }
     if domaine_change {
-        tracing::info!(de = %ancien_tld, vers = %settings.tld, "domaine des sites modifié");
+        tracing::info!(de = %ancien.tld, vers = %settings.tld, "domaine des sites modifié");
         let installed = state.installer.installed()?;
         state.orchestrator.apply(&settings, &installed).await?;
     }
-    Ok(SaveResult { domaine_change })
+    Ok(SaveResult { domaine_change, redemarrage_requis: autres_changements && en_marche })
+}
+
+/// Un redémarrage est-il nécessaire pour appliquer des réglages ?
+#[tauri::command]
+pub fn services_restart_pending(state: State<'_, AppState>) -> Result<bool> {
+    let mut p = state.restart_pending.lock().map_err(|e| Error::Interne(e.to_string()))?;
+    // Plus rien ne tourne : les réglages s'appliqueront au prochain démarrage.
+    if state.orchestrator.running_groups().is_empty() {
+        *p = false;
+    }
+    Ok(*p)
+}
+
+/// Redémarre tout ce qui tourne avec les réglages et configurations actuels.
+#[tauri::command]
+pub async fn services_restart_all(state: State<'_, AppState>) -> Result<Vec<Group>> {
+    let installed = state.installer.installed()?;
+    let res = state.orchestrator.restart_running(&state.settings(), &installed).await;
+    *state.restart_pending.lock().map_err(|e| Error::Interne(e.to_string()))? = false;
+    res
 }

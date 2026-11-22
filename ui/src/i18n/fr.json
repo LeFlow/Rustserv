@@ -32,7 +32,7 @@
     "installer": "Installer depuis le catalogue",
     "port": "port {ports}",
     "ports": "ports {ports}",
-    "pool": "processus PHP (un par port)",
+    "pool": "un voyant par processus PHP",
     "voir_journal": "Journal",
     "masquer_journal": "Masquer le journal",
     "journal_vide": "(journal vide)",
@@ -50,7 +50,11 @@
       "en_cours": "En marche",
       "arret": "Arrêt en cours…",
       "erreur": "Erreur"
-    }
+    },
+    "tout_redemarrer": "Tout redémarrer",
+    "tout_redemarrer_aide": "Redémarre uniquement les services en marche, avec les réglages et fichiers de configuration actuels.",
+    "reglages_en_attente": "Des réglages ont été modifiés pendant que les services tournaient : redémarrez-les pour les appliquer.",
+    "appliquer_maintenant": "Redémarrer maintenant"
   },
   "php": {
     "rechercher": "Rechercher des mises à jour",
@@ -147,7 +151,6 @@
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
-    "enregistre": "Réglages enregistrés. Redémarrez les services concernés pour les appliquer.",
     "serveur_web": "Serveur web",
     "nginx_aide": "léger et rapide, recommandé",
     "apache_aide": "nécessaire pour les fichiers .htaccess (WordPress…)",
@@ -168,7 +171,9 @@
     },
     "enregistre_domaine": "Domaine modifié : configurations et certificats HTTPS mis à jour. Il reste à déclarer les nouveaux domaines dans Windows.",
     "aller_sites": "Mettre à jour les domaines dans la page Sites",
-    "application": "Application…"
+    "application": "Application…",
+    "enregistre_simple": "Réglages enregistrés.",
+    "redemarrage_requis": "Des services sont en marche : utilisez « Tout redémarrer » dans l'onglet Services pour appliquer les changements."
   },
   "catalogue": {
     "mis_a_jour": "Catalogue du {date}",

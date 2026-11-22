@@ -23,6 +23,9 @@ pub struct AppState {
     pub last_php_check: Mutex<Option<u64>>,
     /// Terminaux intégrés ouverts.
     pub terminals: rustserv_core::terminal::Terminals,
+    /// Des réglages ont été enregistrés pendant que des services tournaient :
+    /// un redémarrage est nécessaire pour les appliquer.
+    pub restart_pending: Mutex<bool>,
 }
 
 impl AppState {
@@ -56,6 +59,7 @@ impl AppState {
             settings_warning,
             last_php_check: Mutex::new(None),
             terminals: Default::default(),
+            restart_pending: Mutex::new(false),
         })
     }
 

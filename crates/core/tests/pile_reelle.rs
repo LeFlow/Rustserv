@@ -56,6 +56,20 @@ async fn orchestrateur_tout_demarrer_tout_arreter() {
     let (code, txt) = get(settings.ports.http, "localhost", "/index.php").await;
     assert_eq!(code, 200, "{txt}");
 
+    // « Tout redémarrer » : nouveau port HTTP pris en compte, nouveaux processus.
+    let pid = |s: &Settings, g: usize| match &orch.overview(s, &installed)[g].state {
+        ServiceState::EnCours { pid, .. } => *pid,
+        s => panic!("{s:?}"),
+    };
+    let avant = (pid(&settings, 0), pid(&settings, 2));
+    let ancien_port = settings.ports.http;
+    settings.ports.http = libre();
+    let groupes = orch.restart_running(&settings, &installed).await.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(groupes.len(), 3);
+    assert_ne!(avant, (pid(&settings, 0), pid(&settings, 2)), "les processus auraient dû être relancés");
+    assert_eq!(get(settings.ports.http, "localhost", "/index.php").await.0, 200, "nouveau port non appliqué");
+    assert!(!rustserv_core::process::ports::is_listening(ancien_port), "ancien port toujours ouvert");
+
     // Arrêter PHP arrête aussi le serveur web qui en dépend.
     orch.stop(Group::Php).await.unwrap();
     let v = orch.overview(&settings, &installed);
