@@ -51,6 +51,18 @@ pub enum Category {
     Tool,
 }
 
+impl Category {
+    /// Ordre d'affichage : serveurs web, PHP, bases de données, outils.
+    pub fn ordre(self) -> u8 {
+        match self {
+            Category::Web => 0,
+            Category::Php => 1,
+            Category::Database => 2,
+            Category::Tool => 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,

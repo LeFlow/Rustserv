@@ -194,6 +194,12 @@
       "database": "Base de données",
       "php": "PHP",
       "tool": "Outil"
+    },
+    "sections": {
+      "web": "Serveurs web",
+      "php": "PHP",
+      "database": "Bases de données",
+      "tool": "Outils"
     }
   },
   "erreurs": {

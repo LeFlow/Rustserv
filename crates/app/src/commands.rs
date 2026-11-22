@@ -80,7 +80,10 @@ pub fn catalog_list(state: State<'_, AppState>) -> Result<CatalogView> {
             releases.sort_by(|a, b| version::cmp(&b.version, &a.version));
             PackageView { id: id.clone(), name: p.name.clone(), category: p.category, releases }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    // Regroupement par catégorie (serveurs web ensemble…), puis par nom.
+    let mut packages = packages;
+    packages.sort_by(|a, b| a.category.ordre().cmp(&b.category.ordre()).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     Ok(CatalogView { updated: cat.updated.clone(), packages, warning: state.catalog_warning.clone() })
 }
 

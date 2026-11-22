@@ -94,7 +94,10 @@
 
 {#if catalogue}
   <p class="muted">{t("catalogue.mis_a_jour", { date: catalogue.updated })}</p>
-  {#each catalogue.packages as pkg (pkg.id)}
+  {#each catalogue.packages as pkg, i (pkg.id)}
+    {#if i === 0 || catalogue.packages[i - 1].category !== pkg.category}
+      <h3 class="section">{t(`catalogue.sections.${pkg.category}`)}</h3>
+    {/if}
     <section class="carte">
       <header>
         <h3>{pkg.name}</h3>
@@ -144,6 +147,8 @@
 {/if}
 
 <style>
+  h3.section { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 22px 0 8px; }
+  h3.section:first-of-type { margin-top: 8px; }
   .carte { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 14px; }
   header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   h3 { margin: 0; font-size: 15px; }
