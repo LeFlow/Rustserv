@@ -108,13 +108,25 @@ impl<'a> Stack<'a> {
         // Bases de données : chaque branche a son propre dossier de données. Installer une nouvelle
         // branche ne doit pas faire basculer silencieusement sur une base VIDE : on garde la
         // version la plus récente dont le dossier de données existe déjà.
+        // Une branche choisie **explicitement** pour certains sites (instance secondaire) ne
+        // devient pas la version par défaut : sinon, attribuer MariaDB 13.0 à un site ferait
+        // basculer tous les autres sites vers une base où leurs données n'existent pas.
         if let Some(m) = Moteur::depuis_paquet(package) {
-            let avec_donnees = self
-                .installed
-                .iter()
-                .filter(|p| p.package == package && m.donnees_initialisees(&self.db_datadir(p)))
-                .max_by(|a, b| version::cmp(&a.version, &b.version));
-            if let Some(p) = avec_donnees {
+            let secondaires: std::collections::HashSet<String> = self
+                .settings
+                .site_db
+                .keys()
+                .chain(self.settings.site_mariadb.keys())
+                .filter_map(|site| self.settings.choix_base(site))
+                .filter(|c| c.moteur == m)
+                .map(|c| c.branche)
+                .collect();
+            let avec_donnees: Vec<&InstalledPackage> =
+                self.installed.iter().filter(|p| p.package == package && m.donnees_initialisees(&self.db_datadir(p))).collect();
+            let plus_recente = |v: &mut dyn Iterator<Item = &&'a InstalledPackage>| v.max_by(|a, b| version::cmp(&a.version, &b.version)).copied();
+            if let Some(p) = plus_recente(&mut avec_donnees.iter().filter(|p| !secondaires.contains(&m.branche(&p.version))))
+                .or_else(|| plus_recente(&mut avec_donnees.iter()))
+            {
                 return Ok(p);
             }
         }
@@ -819,6 +831,18 @@ mod tests {
         std::fs::create_dir_all(paths.data().join("mariadb-12.3").join("mysql")).unwrap();
         assert_eq!(st.pick(MARIADB, None).unwrap().version, "12.3.4", "pas de bascule vers une base vide");
         assert_eq!(st.pick(MARIADB, Some("13.0.2")).unwrap().version, "13.0.2", "choix explicite respecté");
+        // Un site passe en 13.0 (données créées) : la version par défaut reste 12.3.
+        std::fs::create_dir_all(paths.data().join("mariadb-13.0").join("mysql")).unwrap();
+        let mut avec_site = Settings::default();
+        avec_site.site_db.insert("demo".into(), "mariadb:13.0".into());
+        let st = Stack::new(&paths, &avec_site, &installed);
+        assert_eq!(st.default_mariadb().unwrap().version, "12.3.4", "pas de bascule vers l'instance d'un seul site");
+        assert_eq!(st.site_db("autre").unwrap().version, "12.3.4");
+        assert_eq!(st.site_db("demo").unwrap().version, "13.0.2");
+        // Anciens réglages (site_mariadb) : même règle.
+        let mut ancien = Settings::default();
+        ancien.site_mariadb.insert("demo".into(), "13.0".into());
+        assert_eq!(Stack::new(&paths, &ancien, &installed).default_mariadb().unwrap().version, "12.3.4");
     }
 
     #[test]
