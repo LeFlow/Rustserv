@@ -159,7 +159,7 @@
           <td>
             {#if mariadbs.length > 1}
               <select disabled={occupe["db-" + s.name]} value={s.mariadb_choice ?? ""} title={t("sites.db_aide")} onchange={(e) => choisirMariadb(s, e.currentTarget.value)}>
-                <option value="">{t("sites.php_defaut", { version: mariadbs.find((x) => x.defaut)?.branch ?? "—" })}</option>
+                <option value="">{t("sites.db_defaut", { version: mariadbs.find((x) => x.defaut)?.branch ?? "—" })}</option>
                 {#each mariadbs.filter((x) => !x.defaut) as m}<option value={m.branch}>MariaDB {m.branch}</option>{/each}
               </select>
               {#if occupe["db-" + s.name]}<div class="muted petit">{t("sites.db_en_cours")}</div>{/if}
