@@ -45,6 +45,20 @@ struct SiteCtx {
     root: String,
     upstream: String,
     php_version: String,
+    /// Certificat HTTPS (absent si le HTTPS n'est pas activé).
+    cert: Option<CertCtx>,
+}
+
+#[derive(Debug, Serialize)]
+struct CertCtx {
+    cert: String,
+    key: String,
+}
+
+impl From<crate::ssl::SiteCert> for CertCtx {
+    fn from(c: crate::ssl::SiteCert) -> Self {
+        Self { cert: slash(&c.cert), key: slash(&c.key) }
+    }
 }
 
 /// Contexte commun aux gabarits nginx et Apache.
@@ -60,6 +74,9 @@ struct WebContext {
     /// Upstream PHP du site par défaut (localhost) ; vide si PHP non installé.
     default_upstream: String,
     sites: Vec<SiteCtx>,
+    /// HTTPS actif (autorité locale créée).
+    https: bool,
+    localhost_cert: Option<CertCtx>,
 }
 
 pub struct Stack<'a> {
@@ -186,11 +203,25 @@ impl<'a> Stack<'a> {
             .map(|p| Upstream { name: upstream_name(&p.version), ports: pool_ports(&p.version, self.settings.php_pool_size) })
             .collect();
         let default = self.default_php();
+        // HTTPS dès que l'autorité locale existe : certificats créés ou renouvelés au besoin.
+        let ca = crate::ssl::load_ca(self.paths)?;
+        let cert_pour = |host: &str| -> Result<Option<CertCtx>> {
+            match &ca {
+                Some(ca) => Ok(Some(crate::ssl::ensure_site_cert(self.paths, ca, host)?.into())),
+                None => Ok(None),
+            }
+        };
+        let localhost_cert = cert_pour("localhost")?;
         let sites = sites::discover(self.paths, &self.settings.tld)?
             .into_iter()
             .filter_map(|s| {
                 let php = self.site_php(&s.name)?;
-                Some(SiteCtx {
+                let cert = match cert_pour(&s.host) {
+                    Ok(c) => c,
+                    Err(e) => return Some(Err(e)),
+                };
+                Some(Ok(SiteCtx {
+                    cert,
                     dir_name: s.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                     dir: slash(&s.dir),
                     name: s.name,
@@ -198,10 +229,12 @@ impl<'a> Stack<'a> {
                     root: slash(&s.root),
                     upstream: upstream_name(&php.version),
                     php_version: php.version.clone(),
-                })
+                }))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(WebContext {
+            https: localhost_cert.is_some(),
+            localhost_cert,
             server_dir: slash(&server.path),
             www: slash(&self.paths.www()),
             logs: slash(&self.paths.logs()),
@@ -212,6 +245,15 @@ impl<'a> Stack<'a> {
             default_upstream: default.map(|p| upstream_name(&p.version)).unwrap_or_default(),
             sites,
         })
+    }
+
+    /// Ports du serveur web : HTTP, plus HTTPS si l'autorité locale existe.
+    pub fn web_ports(&self) -> Result<Vec<u16>> {
+        let mut v = vec![self.settings.ports.http];
+        if crate::ssl::load_ca(self.paths)?.is_some() {
+            v.push(self.settings.ports.https);
+        }
+        Ok(v)
     }
 
     /// Serveur web choisi dans les réglages.
@@ -240,7 +282,7 @@ impl<'a> Stack<'a> {
         let mut s = ServiceSpec::new(NGINX, &exe, self.paths.logs().join("nginx.log"));
         s.args = base.clone();
         s.cwd = pkg.path.clone();
-        s.ports = vec![self.settings.ports.http];
+        s.ports = self.web_ports()?;
         s.stop = StopStrategy::Command { program: exe, args: [base, vec!["-s".into(), "quit".into()]].concat() };
         s.stop_timeout = Duration::from_secs(5);
         Ok(s)
@@ -261,7 +303,7 @@ impl<'a> Stack<'a> {
         let mut s = ServiceSpec::new(APACHE, &exe, self.paths.logs().join("apache.log"));
         s.args = base;
         s.cwd = pkg.path.clone();
-        s.ports = vec![self.settings.ports.http];
+        s.ports = self.web_ports()?;
         // Apache (mode console Windows) surveille l'événement « ap<pid>_shutdown ».
         s.stop = StopStrategy::NamedEvent("ap{pid}_shutdown".into());
         Ok(s)

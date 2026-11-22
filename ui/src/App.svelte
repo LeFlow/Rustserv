@@ -13,9 +13,10 @@
   import Php from "./pages/Php.svelte";
   import Services from "./pages/Services.svelte";
   import Sites from "./pages/Sites.svelte";
+  import Terminal from "./pages/Terminal.svelte";
 
-  type Page = "services" | "php" | "sites" | "catalogue" | "parametres";
-  const pages: Page[] = ["services", "php", "sites", "catalogue", "parametres"];
+  type Page = "services" | "php" | "sites" | "terminal" | "catalogue" | "parametres";
+  const pages: Page[] = ["services", "php", "sites", "terminal", "catalogue", "parametres"];
 
   let page = $state<Page>("services");
   let info = $state<AppInfo | null>(null);
@@ -43,15 +44,16 @@
     {:else if page === "php"}
       <Php allerAuCatalogue={() => (page = "catalogue")} />
     {:else if page === "sites"}
-      <Sites />
+      <Sites allerAuTerminal={() => (page = "terminal")} />
     {:else if page === "catalogue"}
       <Catalogue />
     {:else if page === "parametres"}
       <Parametres racine={info?.racine ?? ""} />
-    {:else}
-      <p class="muted">{t("pages.bientot")}</p>
-      {#if info}<p class="muted mono">{t("app.racine", { racine: info.racine })}</p>{/if}
     {/if}
+    <!-- Toujours monté (simplement masqué) : les terminaux restent ouverts d'une page à l'autre. -->
+    <div class:cache={page !== "terminal"}>
+      <Terminal visible={page === "terminal"} />
+    </div>
   </main>
 </div>
 
@@ -65,4 +67,5 @@
   footer { margin-top: auto; font-size: 12px; color: var(--muted); padding: 0 8px; }
   main { padding: 24px 32px; overflow: auto; }
   .erreur { color: var(--danger); }
+  .cache { display: none; }
 </style>

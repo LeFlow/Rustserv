@@ -10,6 +10,7 @@
 mod commands;
 mod ext_commands;
 mod php_commands;
+mod site_commands;
 mod state;
 mod tray;
 
@@ -59,6 +60,16 @@ fn main() {
             ext_commands::php_profile_plan,
             ext_commands::php_profile_apply,
             ext_commands::open_path,
+            site_commands::hosts_status,
+            site_commands::hosts_sync,
+            site_commands::sites_refresh,
+            site_commands::ssl_status,
+            site_commands::ssl_enable,
+            site_commands::ssl_disable,
+            site_commands::terminal_open,
+            site_commands::terminal_write,
+            site_commands::terminal_resize,
+            site_commands::terminal_close,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
@@ -123,6 +134,7 @@ pub(crate) fn quit(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let sup = app.state::<state::AppState>().supervisor().clone();
         tracing::info!("arrêt de tous les services avant de quitter");
+        app.state::<state::AppState>().terminals.close_all();
         sup.stop_all().await;
         app.exit(0);
     });

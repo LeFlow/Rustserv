@@ -120,19 +120,32 @@ impl Installer {
         if work.exists() {
             let _ = std::fs::remove_dir_all(&work);
         }
-        let (archive2, work2, subdir) = (archive.clone(), work.clone(), release.subdir.clone());
-        let label = release.file_name();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64)>();
-        let tache = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
-            extract_zip(&archive2, &work2, |d, t| {
-                let _ = tx.send((d, t));
-            })?;
-            content_root(&work2, subdir.as_deref(), &label)
-        });
-        while let Some((d, t)) = rx.recv().await {
-            emit(InstallPhase::Extraction, d, Some(t));
-        }
-        let racine = tache.await.map_err(|e| Error::Interne(e.to_string()))??;
+        let racine = if let Some(nom) = &release.file {
+            // Fichier unique (ex. composer.phar) : pas d'archive à extraire.
+            std::fs::create_dir_all(&work).map_err(|e| Error::fichier(&work, e))?;
+            let cible = work.join(nom);
+            std::fs::copy(&archive, &cible).map_err(|e| Error::fichier(&cible, e))?;
+            if let Some(stem) = nom.strip_suffix(".phar") {
+                // Lanceur : « composer » dans le terminal exécute le .phar avec le PHP du PATH.
+                let bat = work.join(format!("{stem}.bat"));
+                std::fs::write(&bat, format!("@php \"%~dp0{nom}\" %*\r\n")).map_err(|e| Error::fichier(&bat, e))?;
+            }
+            work.clone()
+        } else {
+            let (archive2, work2, subdir) = (archive.clone(), work.clone(), release.subdir.clone());
+            let label = release.file_name();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64)>();
+            let tache = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
+                extract_zip(&archive2, &work2, |d, t| {
+                    let _ = tx.send((d, t));
+                })?;
+                content_root(&work2, subdir.as_deref(), &label)
+            });
+            while let Some((d, t)) = rx.recv().await {
+                emit(InstallPhase::Extraction, d, Some(t));
+            }
+            tache.await.map_err(|e| Error::Interne(e.to_string()))??
+        };
 
         // 3. Déplacement atomique vers bin/
         if let Some(parent) = dest.parent() {
@@ -257,6 +270,7 @@ mod tests {
             sha256: sha.into(),
             subdir: subdir.map(Into::into),
             vcruntime_min: None,
+            file: None,
         }
     }
 
@@ -296,6 +310,23 @@ mod tests {
         inst.uninstall("nginx", "1.2.3").unwrap();
         assert!(inst.installed().unwrap().is_empty());
         assert_eq!(inst.uninstall("nginx", "1.2.3").unwrap_err().code(), "installation.non_installe");
+    }
+
+    #[tokio::test]
+    async fn fichier_unique_phar_avec_lanceur() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        let contenu = b"<?php echo 'composer';".to_vec();
+        let sha = hex::encode(Sha256::digest(&contenu));
+        let url = serveur(contenu).await;
+        let inst = Installer::with_client(paths.clone(), reqwest::Client::builder().no_proxy().build().unwrap());
+        let mut r = release(&url, &sha, None);
+        r.file = Some("composer.phar".into());
+        let p = inst.install("composer", &r, &AtomicBool::new(false), &|_| {}).await.unwrap();
+        assert!(p.path.join("composer.phar").is_file());
+        let bat = std::fs::read_to_string(p.path.join("composer.bat")).unwrap();
+        assert_eq!(bat, "@php \"%~dp0composer.phar\" %*\r\n");
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@ pas de registre), pour Windows 10/11. Tauri 2 (Rust) + Svelte 5 (TypeScript).
 
 | Action | Commande (PowerShell, à la racine) |
 |---|---|
-| Lancer en dev (fenêtre + rechargement à chaud) | `pnpm tauri dev` |
+| Lancer en dev (fenêtre + rechargement à chaud ; compile aussi le helper) | `pnpm tauri dev` |
 | Tests du noyau Rust | `cargo test -p rustserv-core` |
 | Vérification des types du front | `pnpm check` |
 | Build de l'interface seule | `pnpm build` |
@@ -101,6 +101,28 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   sans bloquer le reste ; une seule transaction php.ini.
 - Après modification, seuls les php-cgi **de cette version** sont relancés, s'ils tournaient.
 
+## Sites, HTTPS et terminal (phase 4)
+
+- **hosts** : `crates/helper` = lib (logique pure, sans dépendance, testée) + `rustserv-helper.exe`
+  (`windows_subsystem`, lancé via `ShellExecuteExW` verbe `runas` → fenêtre UAC). Seul le bloc
+  `# BEGIN Rustserv … # END Rustserv` est réécrit ; BOM/CRLF/entrées tierces conservés ;
+  copie `hosts.rustserv.bak`. Domaines acceptés uniquement en `.test .localhost .local .internal .lan`
+  (le helper élevé lit un fichier écrit par l'app : il ne doit jamais pouvoir détourner un vrai site).
+  Erreurs du helper → `<demande>.err` (sortie d'un processus élevé illisible). UAC refusé → `admin.refuse`.
+- Le helper doit être à côté de `rustserv.exe` : `pnpm dev`/`pnpm build` le compilent d'abord.
+- Le bandeau « domaines à mettre à jour » ne déclenche jamais l'UAC tout seul : clic utilisateur.
+- **HTTPS** (`ssl.rs`, rcgen 0.14) : CA ECDSA P-256 10 ans dans `ssl/ca/` (clé, PEM, DER, ca.json),
+  installée dans **CurrentUser\Root** (confirmation Windows, pas d'admin). L'émetteur est reconstruit
+  avec `Issuer::new(ca_params(info), key)` (pas besoin de x509-parser). Certificats de site 825 j
+  (`site.test` + `*.site.test`, `localhost` + 127.0.0.1), renouvelés à < 30 j ou si la CA change.
+  HTTPS actif ⇔ CA présente : nginx `listen 443 ssl` + `http2 on`, Apache vhosts `*:443` via macros.
+- **Terminal** (`terminal.rs`, portable-pty/ConPTY) : PowerShell (pwsh si présent) dans le dossier du
+  site, PATH = PHP du site + Composer + MariaDB/bin, `PHPRC` = etc/php/<v>. ConPTY envoie `ESC[6n`
+  au démarrage et **attend la réponse** (xterm.js répond ; un test doit répondre lui-même).
+  Décodage UTF-8 par morceaux (`decode_utf8`). La page Terminal reste montée (masquée) entre pages.
+- **Composer** : entrée catalogue `file: "composer.phar"` (fichier unique, pas d'archive) ; un `.phar`
+  reçoit un lanceur `<nom>.bat` (`@php "%~dp0composer.phar" %*`).
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
@@ -154,6 +176,15 @@ Tests réels (binaires téléchargés dans `target/pile-test`, ~150 Mo) :
 - [x] Profils Laravel / Symfony / WordPress avec aperçu
 - Test réel : `extensions_pecl_et_profils_reels` (dossier `target/pile-ext`)
 
+### Phase 4 — Sites, hosts, HTTPS, terminal ✅ (2026-11-22)
+- [x] Domaines `.test` via fichier hosts (helper UAC, bloc balisé, validation stricte)
+- [x] HTTPS : CA locale + certificats par site, nginx (HTTP/2) et Apache
+- [x] Terminal intégré (xterm.js + ConPTY) avec le PHP du site, Composer, client MariaDB
+- [x] Composer dans le catalogue
+- Non testé automatiquement (fenêtres Windows à cliquer) : UAC du fichier hosts,
+  confirmation d'installation de la CA. Testés : helper sans droits, HTTPS avec CA approuvée par le client.
+- Option non faite : DNS local + règle NRPT (le fichier hosts suffit).
+- Tests réels : `https_nginx_et_apache` (`target/pile-https`), `terminal_avec_le_php_du_site`
+
 ### Phases suivantes
-- [ ] Phase 4 — Sites, hosts, HTTPS, terminal
 - [ ] Phase 5 — Tests de rétrocompatibilité

@@ -283,7 +283,7 @@ impl Orchestrator {
                 software: web.into(),
                 version: web_pkg.map(|p| p.version.clone()),
                 installed: web_pkg.is_some(),
-                ports: vec![settings.ports.http],
+                ports: stack.web_ports().unwrap_or_else(|_| vec![settings.ports.http]),
                 // Si l'autre serveur tourne encore (réglage changé), on l'affiche aussi.
                 members: members_of(&|id| id == NGINX || id == APACHE),
                 state: ServiceState::Arrete,

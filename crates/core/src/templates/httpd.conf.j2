@@ -5,6 +5,9 @@
 Define SRVROOT "{{ server_dir }}"
 ServerRoot "{{ server_dir }}"
 Listen {{ http_port }}
+{%- if https %}
+Listen {{ https_port }}
+{%- endif %}
 
 LoadModule access_compat_module modules/mod_access_compat.so
 LoadModule actions_module modules/mod_actions.so
@@ -36,6 +39,9 @@ LoadModule rewrite_module modules/mod_rewrite.so
 LoadModule setenvif_module modules/mod_setenvif.so
 LoadModule slotmem_shm_module modules/mod_slotmem_shm.so
 LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
+{%- if https %}
+LoadModule ssl_module modules/mod_ssl.so
+{%- endif %}
 
 ServerName localhost:{{ http_port }}
 ServerAdmin admin@localhost
@@ -55,6 +61,11 @@ AcceptFilter http none
 AcceptFilter https none
 EnableSendfile off
 EnableMMAP off
+{%- if https %}
+
+SSLSessionCache "shmcb:{{ tmp }}/apache/ssl_scache(512000)"
+SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
+{%- endif %}
 
 <Directory />
     AllowOverride none
@@ -82,8 +93,8 @@ ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
 </Proxy>
 {% endfor %}
 
-# Page d'accueil : http://localhost/ liste les projets de www/
-<VirtualHost *:{{ http_port }}>
+{#- Contenu commun aux vhosts HTTP et HTTPS. #}
+{%- macro accueil() %}
     ServerName localhost
     DocumentRoot "{{ www }}"
     <Directory "{{ www }}">
@@ -104,10 +115,9 @@ ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
         </FilesMatch>
     </Directory>
 {%- endfor %}
-</VirtualHost>
-{% for s in sites %}
-# Site {{ s.name }} (PHP {{ s.php_version }})
-<VirtualHost *:{{ http_port }}>
+{%- endmacro %}
+
+{%- macro site(s) %}
     ServerName {{ s.host }}
     ServerAlias *.{{ s.host }}
     DocumentRoot "{{ s.root }}"
@@ -121,5 +131,34 @@ ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
     <FilesMatch "\.php$">
         SetHandler "proxy:balancer://{{ s.upstream }}/"
     </FilesMatch>
+{%- endmacro %}
+
+{%- macro tls(c) %}
+    SSLEngine on
+    SSLCertificateFile "{{ c.cert }}"
+    SSLCertificateKeyFile "{{ c.key }}"
+{%- endmacro %}
+
+# Page d'accueil : http://localhost/ liste les projets de www/
+<VirtualHost *:{{ http_port }}>
+{{- accueil() }}
 </VirtualHost>
+{%- if https %}
+
+<VirtualHost *:{{ https_port }}>
+{{- accueil() }}
+{{- tls(localhost_cert) }}
+</VirtualHost>
+{%- endif %}
+{% for s in sites %}
+# Site {{ s.name }} (PHP {{ s.php_version }})
+<VirtualHost *:{{ http_port }}>
+{{- site(s) }}
+</VirtualHost>
+{%- if s.cert %}
+<VirtualHost *:{{ https_port }}>
+{{- site(s) }}
+{{- tls(s.cert) }}
+</VirtualHost>
+{%- endif %}
 {% endfor %}

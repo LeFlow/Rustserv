@@ -9,6 +9,7 @@
 pub mod catalog;
 pub mod error;
 pub mod extensions_ops;
+pub mod hosts;
 pub mod orchestrator;
 pub mod paths;
 pub mod php;
@@ -17,7 +18,9 @@ pub mod process;
 pub mod services;
 pub mod settings;
 pub mod sites;
+pub mod ssl;
 pub mod templates;
+pub mod terminal;
 
 pub use error::{Error, Result};
 pub use paths::Paths;

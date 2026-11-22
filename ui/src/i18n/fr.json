@@ -10,7 +10,8 @@
     "php": "PHP",
     "sites": "Sites",
     "catalogue": "Catalogue",
-    "parametres": "Paramètres"
+    "parametres": "Paramètres",
+    "terminal": "Terminal"
   },
   "pages": {
     "bientot": "Cette section arrive dans une prochaine étape."
@@ -116,16 +117,33 @@
   },
   "sites": {
     "actualiser": "Actualiser",
-    "aide": "Chaque dossier de www/ est un site.",
+    "actualise": "Sites et configurations mis à jour.",
+    "aide": "Chaque dossier de www/ est un site : www/monsite → monsite.test.",
     "aucun": "Aucun site : créez un dossier dans www/ (par exemple www/monsite).",
     "col_site": "Site",
-    "col_dossier": "Racine web",
+    "col_ouvrir": "Ouvrir",
     "php_defaut": "PHP par défaut ({version})",
     "non_installe": "non installé",
     "php_manquant": "PHP {branche} n'est pas installé : le site utilise PHP {version}.",
-    "application": "Application…",
-    "ouvrir": "Ouvrir",
-    "domaine_bientot": "domaine actif en phase 4"
+    "terminal": "Terminal",
+    "domaine_a_declarer": "domaine à déclarer",
+    "domaine_non_declare": "Ce domaine n'est pas encore déclaré dans Windows : utilisez le bouton en haut de la page.",
+    "hosts_titre": "{n} domaine(s) à mettre à jour dans Windows",
+    "hosts_ajout": "À ajouter : {liste}. ",
+    "hosts_retrait": "À retirer : {liste}.",
+    "hosts_uac": "Windows va demander l'autorisation d'administrateur (fichier hosts). Seul le bloc Rustserv est modifié.",
+    "hosts_bouton": "Mettre à jour les domaines",
+    "hosts_attente": "En attente de Windows…",
+    "hosts_ok": "Domaines mis à jour : vos sites sont accessibles par leur nom.",
+    "https_titre": "HTTPS local désactivé",
+    "https_explication": "Rustserv crée une autorité de certification propre à ce PC. Windows vous demandera de la confirmer : répondez « Oui ».",
+    "https_activer": "Activer le HTTPS",
+    "https_attente": "Confirmez dans la fenêtre de Windows…",
+    "https_ok": "HTTPS activé : https://monsite.test affiche un cadenas.",
+    "https_actif": "HTTPS actif",
+    "https_ca": "Autorité : {nom}",
+    "https_desactiver": "Désactiver le HTTPS",
+    "https_desactive": "HTTPS désactivé et autorité retirée de Windows."
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
@@ -220,8 +238,25 @@
       "invalide": "Le fichier {fichier} est mal formé : {detail}"
     },
     "admin": {
-      "requis": "Cette opération nécessite les droits administrateur : {operation}. Acceptez la demande de Windows pour continuer."
+      "requis": "Cette opération nécessite les droits administrateur : {operation}. Acceptez la demande de Windows pour continuer.",
+      "refuse": "Vous avez refusé la demande de Windows ({operation}). Rien n'a été modifié ; recommencez et cliquez sur « Oui » pour continuer."
+    },
+    "hosts": {
+      "echec": "Le fichier hosts n'a pas pu être mis à jour : {detail}"
+    },
+    "ssl": {
+      "erreur": "Erreur HTTPS : {detail}"
     },
     "interne": "Erreur interne de Rustserv : {detail}"
+  },
+  "terminal": {
+    "nouveau": "Nouveau terminal",
+    "dossier_www": "Dossier www (PHP par défaut)",
+    "aide": "PowerShell avec le PHP du site, Composer et le client MariaDB.",
+    "vide": "Aucun terminal ouvert. Choisissez un site puis « Nouveau terminal ».",
+    "fermer": "Fermer ce terminal",
+    "termine": "[terminal fermé]",
+    "entete": "{dossier}",
+    "entete_php": "{dossier} — PHP {php}"
   }
 }

@@ -82,6 +82,10 @@ pub struct Release {
     /// Version minimale du runtime Visual C++ (vcruntime140.dll) requise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vcruntime_min: Option<String>,
+    /// Téléchargement d'un **fichier unique** (pas une archive) enregistré sous ce nom,
+    /// ex. `composer.phar`. Un `.phar` reçoit un lanceur `<nom>.bat`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,9 +175,11 @@ impl Catalog {
                         p.push(format!("{ctx} : URL non sécurisée (https obligatoire) : {u}"));
                     }
                 }
-                if let Some(s) = &r.subdir {
-                    if s.contains("..") || s.starts_with(['/', '\\']) || s.contains(':') {
-                        p.push(format!("{ctx} : sous-dossier dangereux « {s} »"));
+                for (quoi, v) in [("sous-dossier", &r.subdir), ("nom de fichier", &r.file)] {
+                    if let Some(s) = v {
+                        if s.contains("..") || s.starts_with(['/', '\\']) || s.contains(':') || (quoi == "nom de fichier" && s.contains(['/', '\\'])) {
+                            p.push(format!("{ctx} : {quoi} dangereux « {s} »"));
+                        }
                     }
                 }
             }

@@ -187,7 +187,49 @@ export interface ProfileResult {
   echecs_pecl: [string, ErreurBackend][];
 }
 
+// ------------------------------------------------------------ domaines, HTTPS, terminal
+
+export interface HostsStatus {
+  declares: string[];
+  manquants: string[];
+  en_trop: string[];
+}
+
+export interface CaInfo {
+  nom: string;
+  cree_le: number;
+  expire_le: number;
+  empreinte: string;
+}
+
+export interface SslStatus {
+  ca: CaInfo | null;
+  installee: boolean;
+  ca_pem: string;
+}
+
+export interface TerminalInfo {
+  id: number;
+  cwd: string;
+  php: string | null;
+}
+
 export const api = {
+  hostsStatus: () => invoke<HostsStatus>("hosts_status"),
+  hostsSync: () => invoke<HostsStatus>("hosts_sync"),
+  sitesRefresh: () => invoke<void>("sites_refresh"),
+  sslStatus: () => invoke<SslStatus>("ssl_status"),
+  sslEnable: () => invoke<SslStatus>("ssl_enable"),
+  sslDisable: () => invoke<SslStatus>("ssl_disable"),
+  terminalOpen: (site: string | null, cols: number, rows: number) =>
+    invoke<TerminalInfo>("terminal_open", { site, cols, rows }),
+  terminalWrite: (id: number, data: string) => invoke<void>("terminal_write", { id, data }),
+  terminalResize: (id: number, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
+  terminalClose: (id: number) => invoke<void>("terminal_close", { id }),
+  onTerminalOutput: (cb: (e: { id: number; data: string }) => void): Promise<UnlistenFn> =>
+    listen<{ id: number; data: string }>("terminal-output", (e) => cb(e.payload)),
+  onTerminalExit: (cb: (id: number) => void): Promise<UnlistenFn> => listen<number>("terminal-exit", (e) => cb(e.payload)),
+
   phpExtensions: (version: string) => invoke<ExtensionInfo[]>("php_extensions", { version }),
   phpExtensionSet: (version: string, name: string, enabled: boolean) =>
     invoke<void>("php_extension_set", { version, name, enabled }),

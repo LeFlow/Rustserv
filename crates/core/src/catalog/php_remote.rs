@@ -54,6 +54,7 @@ pub fn parse_releases(json: &str) -> Result<Vec<Release>> {
             sha256: sha.to_ascii_lowercase(),
             subdir: None,
             vcruntime_min: vcruntime_for(&compiler).map(Into::into),
+            file: None,
         });
     }
     Ok(out)

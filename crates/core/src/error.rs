@@ -71,6 +71,18 @@ pub enum Error {
     #[error("profil inconnu : {profil}")]
     ProfilInconnu { profil: String },
 
+    /// L'utilisateur a refusé la fenêtre de Windows (UAC ou confirmation de certificat).
+    #[error("autorisation refusée pour : {operation}")]
+    AdminRefuse { operation: String },
+
+    /// Le helper n'a pas pu modifier le fichier hosts.
+    #[error("échec de la mise à jour du fichier hosts : {detail}")]
+    HostsEchec { detail: String },
+
+    /// Erreur de génération ou d'installation de certificat.
+    #[error("HTTPS : {detail}")]
+    Ssl { detail: String },
+
     /// Réglages incohérents (ports en double…).
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
@@ -171,6 +183,9 @@ impl Error {
             Error::ExtensionRequise { .. } => "extension.requise",
             Error::PeclIntrouvable { .. } => "extension.pecl_introuvable",
             Error::ProfilInconnu { .. } => "extension.profil_inconnu",
+            Error::AdminRefuse { .. } => "admin.refuse",
+            Error::HostsEchec { .. } => "hosts.echec",
+            Error::Ssl { .. } => "ssl.erreur",
             Error::Fichier { .. } => "fichier.acces",
             Error::Io(_) => "io.generique",
             Error::JsonInvalide { .. } => "json.invalide",
@@ -220,6 +235,8 @@ impl Error {
             Error::ExtensionRequise { extension, par } => json!({ "extension": extension, "par": par }),
             Error::PeclIntrouvable { extension, branche } => json!({ "extension": extension, "branche": branche }),
             Error::ProfilInconnu { profil } => json!({ "profil": profil }),
+            Error::AdminRefuse { operation } => json!({ "operation": operation }),
+            Error::HostsEchec { detail } | Error::Ssl { detail } => json!({ "detail": detail }),
             Error::VcRuntime { requis, installe } => json!({
                 "requis": requis,
                 "installe": installe.clone().unwrap_or_else(|| "aucun".into()),
@@ -304,6 +321,9 @@ mod tests {
             Error::ExtensionRequise { extension: s(), par: s() },
             Error::PeclIntrouvable { extension: s(), branche: s() },
             Error::ProfilInconnu { profil: s() },
+            Error::AdminRefuse { operation: s() },
+            Error::HostsEchec { detail: s() },
+            Error::Ssl { detail: s() },
             Error::fichier("x", std::io::Error::other("x")),
             Error::Io(std::io::Error::other("x")),
             Error::JsonInvalide { fichier: s(), detail: s() },

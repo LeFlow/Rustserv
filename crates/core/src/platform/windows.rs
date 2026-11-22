@@ -270,6 +270,142 @@ pub fn vcruntime_version() -> Option<String> {
     }
 }
 
+// ------------------------------------------------------------------ Élévation UAC
+
+/// Résultat d'un lancement en administrateur.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Elevation {
+    /// Le programme s'est exécuté ; code de sortie.
+    Termine(u32),
+    /// L'utilisateur a refusé la demande de Windows.
+    Refuse,
+}
+
+/// Lance `exe args` **en administrateur** (fenêtre UAC) et attend la fin.
+pub fn run_elevated(exe: &std::path::Path, args: &str) -> std::io::Result<Elevation> {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_CANCELLED};
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let verb = wide("runas");
+    let file: Vec<u16> = exe.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let params = wide(args);
+    unsafe {
+        let mut info: SHELLEXECUTEINFOW = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+        info.lpVerb = verb.as_ptr();
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
+        info.nShow = SW_HIDE;
+        if ShellExecuteExW(&mut info) == 0 {
+            if GetLastError() == ERROR_CANCELLED {
+                return Ok(Elevation::Refuse);
+            }
+            return Err(std::io::Error::last_os_error());
+        }
+        if info.hProcess.is_null() {
+            return Err(std::io::Error::other("processus élevé introuvable"));
+        }
+        let h = Owned(info.hProcess);
+        WaitForSingleObject(h.0, INFINITE);
+        let mut code: u32 = 0;
+        GetExitCodeProcess(h.0, &mut code);
+        Ok(Elevation::Termine(code))
+    }
+}
+
+// ------------------------------------------------------------------ Certificats
+
+/// Magasin « Autorités de certification racines de confiance » de l'utilisateur courant
+/// (pas besoin des droits administrateur ; Windows demande une confirmation à l'ajout).
+struct RootStore(windows_sys::Win32::Security::Cryptography::HCERTSTORE);
+
+impl RootStore {
+    fn open() -> std::io::Result<Self> {
+        use windows_sys::Win32::Security::Cryptography::{CertOpenStore, CERT_STORE_PROV_SYSTEM_W, CERT_SYSTEM_STORE_CURRENT_USER};
+        let name = wide("Root");
+        let h = unsafe { CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, name.as_ptr() as *const _) };
+        if h.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self(h))
+    }
+
+    /// Cherche un certificat identique (encodage DER) ; renvoie son contexte (à libérer).
+    fn find(&self, der: &[u8]) -> Option<*const windows_sys::Win32::Security::Cryptography::CERT_CONTEXT> {
+        use windows_sys::Win32::Security::Cryptography::{
+            CertCreateCertificateContext, CertFindCertificateInStore, CertFreeCertificateContext, CERT_FIND_EXISTING, PKCS_7_ASN_ENCODING,
+            X509_ASN_ENCODING,
+        };
+        unsafe {
+            let ctx = CertCreateCertificateContext(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, der.as_ptr(), der.len() as u32);
+            if ctx.is_null() {
+                return None;
+            }
+            let found = CertFindCertificateInStore(
+                self.0,
+                X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                0,
+                CERT_FIND_EXISTING,
+                ctx as *const _,
+                std::ptr::null(),
+            );
+            CertFreeCertificateContext(ctx);
+            (!found.is_null()).then_some(found)
+        }
+    }
+}
+
+impl Drop for RootStore {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Security::Cryptography::CertCloseStore(self.0, 0) };
+    }
+}
+
+/// Le certificat (DER) est-il dans les autorités racines de l'utilisateur ?
+pub fn root_cert_installed(der: &[u8]) -> bool {
+    let Ok(store) = RootStore::open() else { return false };
+    match store.find(der) {
+        Some(c) => {
+            unsafe { windows_sys::Win32::Security::Cryptography::CertFreeCertificateContext(c) };
+            true
+        }
+        None => false,
+    }
+}
+
+/// Ajoute le certificat aux autorités racines de l'utilisateur.
+/// Windows affiche une fenêtre de confirmation : renvoie `Ok(false)` si l'utilisateur refuse.
+pub fn install_root_cert(der: &[u8]) -> std::io::Result<bool> {
+    use windows_sys::Win32::Security::Cryptography::{CertAddEncodedCertificateToStore, CERT_STORE_ADD_REPLACE_EXISTING, X509_ASN_ENCODING};
+    let store = RootStore::open()?;
+    let ok = unsafe {
+        CertAddEncodedCertificateToStore(store.0, X509_ASN_ENCODING, der.as_ptr(), der.len() as u32, CERT_STORE_ADD_REPLACE_EXISTING, std::ptr::null_mut())
+    };
+    if ok == 0 {
+        let e = std::io::Error::last_os_error();
+        // 0x800704C7 = ERROR_CANCELLED : bouton « Non » de la confirmation Windows.
+        if e.raw_os_error() == Some(0x800704C7u32 as i32) || e.raw_os_error() == Some(1223) {
+            return Ok(false);
+        }
+        return Err(e);
+    }
+    Ok(true)
+}
+
+/// Retire le certificat des autorités racines (Windows peut demander confirmation).
+pub fn remove_root_cert(der: &[u8]) -> std::io::Result<bool> {
+    use windows_sys::Win32::Security::Cryptography::CertDeleteCertificateFromStore;
+    let store = RootStore::open()?;
+    match store.find(der) {
+        // CertDeleteCertificateFromStore libère le contexte.
+        Some(c) => Ok(unsafe { CertDeleteCertificateFromStore(c) } != 0),
+        None => Ok(false),
+    }
+}
+
 /// Récupère le handle brut d'un `std::process::Child` (utile hors tokio).
 #[allow(dead_code)]
 pub fn raw_handle(child: &std::process::Child) -> HANDLE {

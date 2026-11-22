@@ -21,6 +21,8 @@ pub struct AppState {
     pub settings_warning: Option<serde_json::Value>,
     /// Dernière recherche de mises à jour PHP (session courante).
     pub last_php_check: Mutex<Option<u64>>,
+    /// Terminaux intégrés ouverts.
+    pub terminals: rustserv_core::terminal::Terminals,
 }
 
 impl AppState {
@@ -53,6 +55,7 @@ impl AppState {
             catalog_warning,
             settings_warning,
             last_php_check: Mutex::new(None),
+            terminals: Default::default(),
         })
     }
 

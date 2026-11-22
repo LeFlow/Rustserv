@@ -55,6 +55,12 @@ http {
     # Page d'accueil : http://localhost/ liste les projets de www/
     server {
         listen {{ http_port }} default_server;
+{%- if https %}
+        listen {{ https_port }} ssl default_server;
+        http2 on;
+        ssl_certificate "{{ localhost_cert.cert }}";
+        ssl_certificate_key "{{ localhost_cert.key }}";
+{%- endif %}
         server_name localhost 127.0.0.1;
         root "{{ www }}";
         index index.php index.html index.htm;
@@ -74,6 +80,12 @@ http {
     # Site {{ s.name }} (PHP {{ s.php_version }})
     server {
         listen {{ http_port }};
+{%- if s.cert %}
+        listen {{ https_port }} ssl;
+        http2 on;
+        ssl_certificate "{{ s.cert.cert }}";
+        ssl_certificate_key "{{ s.cert.key }}";
+{%- endif %}
         server_name {{ s.host }} *.{{ s.host }};
         root "{{ s.root }}";
         index index.php index.html index.htm;

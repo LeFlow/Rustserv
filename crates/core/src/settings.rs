@@ -107,8 +107,14 @@ impl Settings {
         if !(1..=10).contains(&self.php_pool_size) {
             return invalide("le nombre de processus PHP doit être compris entre 1 et 10".into());
         }
-        if !crate::sites::valid_name(&self.tld) {
-            return invalide(format!("le domaine « {} » est invalide (lettres, chiffres et tirets uniquement)", self.tld));
+        // Uniquement des domaines réservés au local : un vrai domaine (.dev, .com…)
+        // rendrait des sites Internet inaccessibles et .dev impose en plus le HTTPS.
+        if !crate::hosts::TLD_AUTORISES.contains(&self.tld.as_str()) {
+            return invalide(format!(
+                "le domaine « .{} » n'est pas autorisé ; choisissez parmi : .{}",
+                self.tld,
+                crate::hosts::TLD_AUTORISES.join(", .")
+            ));
         }
         if self.timezone.trim().is_empty() {
             return invalide("le fuseau horaire est obligatoire".into());
@@ -157,5 +163,9 @@ mod tests {
         let mut s = Settings::default();
         s.tld = "mon tld".into();
         assert!(s.validate().is_err());
+        s.tld = "dev".into();
+        assert!(s.validate().is_err(), ".dev est un vrai domaine");
+        s.tld = "localhost".into();
+        assert!(s.validate().is_ok());
     }
 }

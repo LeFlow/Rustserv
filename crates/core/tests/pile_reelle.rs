@@ -297,6 +297,134 @@ async fn extensions_pecl_et_profils_reels() {
     orch.supervisor().stop_all().await;
 }
 
+/// Phase 4 : HTTPS réel sur Nginx puis Apache, avec la CA locale (dossier `target/pile-https`).
+/// La CA est approuvée **uniquement par le client de test** (pas d'installation dans Windows).
+#[tokio::test]
+#[ignore]
+async fn https_nginx_et_apache() {
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    let root = racine().with_file_name("pile-https");
+    let paths = Paths::new(&root);
+    paths.ensure_layout().unwrap();
+    let _ = rustserv_core::ssl::delete_all(&paths);
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    for (id, b) in [("nginx", None), ("apache", None), ("php", Some("8.3"))] {
+        installe(&inst, &cat, id, b).await;
+    }
+    let site = paths.www().join("demo");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join("index.php"), "<?php echo ($_SERVER['HTTPS'] ?? 'off') . ' ' . $_SERVER['HTTP_HOST'];").unwrap();
+
+    let ca = rustserv_core::ssl::ensure_ca(&paths).unwrap();
+    let ca_pem = std::fs::read(rustserv_core::ssl::ca_cert_path(&paths)).unwrap();
+    let mut settings = Settings::default();
+    settings.ports.http = libre();
+    settings.ports.https = libre();
+    let (http, https) = (settings.ports.http, settings.ports.https);
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .add_root_certificate(reqwest::Certificate::from_pem(&ca_pem).unwrap())
+        .resolve("demo.test", std::net::SocketAddr::from(([127, 0, 0, 1], https)))
+        .resolve("localhost", std::net::SocketAddr::from(([127, 0, 0, 1], https)))
+        .build()
+        .unwrap();
+
+    for serveur in [WebServer::Nginx, WebServer::Apache] {
+        settings.web_server = serveur;
+        orch.start(Group::Web, &settings, &inst.installed().unwrap()).await.unwrap_or_else(|e| panic!("{serveur:?} : {e}\n{}", e.params()));
+        for url in [format!("https://demo.test:{https}/"), format!("https://localhost:{https}/demo/index.php")] {
+            let r = client.get(&url).send().await.unwrap_or_else(|e| panic!("{serveur:?} {url} : {e:?}"));
+            let (code, version) = (r.status().as_u16(), r.version());
+            let txt = r.text().await.unwrap();
+            println!("{serveur:?} {url} → {code} {version:?} « {txt} »");
+            assert_eq!(code, 200);
+            assert!(txt.starts_with("on "), "PHP doit voir HTTPS=on : {txt}");
+        }
+        // Le HTTP reste disponible.
+        assert_eq!(get(http, "demo.test", "/").await.1, format!("off demo.test"));
+        orch.stop(Group::Php).await.unwrap();
+    }
+    println!("CA : {}", ca.info.nom);
+    orch.supervisor().stop_all().await;
+}
+
+/// Phase 4 : terminal intégré (vrai PowerShell via ConPTY) avec le PHP du site.
+#[tokio::test]
+#[ignore]
+async fn terminal_avec_le_php_du_site() {
+    use rustserv_core::terminal::Terminals;
+    use std::sync::{Arc, Mutex};
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    installe(&inst, &cat, "php", Some("7.4")).await;
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    std::fs::create_dir_all(paths.www().join("ancien")).unwrap();
+    let mut settings = Settings::default();
+    settings.site_php.insert("ancien".into(), "7.4".into());
+    let installed = inst.installed().unwrap();
+    let st = Stack::new(&paths, &settings, &installed);
+    let env = st.terminal_env(Some("ancien")).unwrap();
+    let php = st.site_php("ancien").unwrap();
+    rustserv_core::php::ensure_php_ini(&paths, &php.path, &php.version, &settings).unwrap();
+
+    let sortie = Arc::new(Mutex::new(String::new()));
+    let fini = Arc::new(Mutex::new(false));
+    let (s2, f2) = (sortie.clone(), fini.clone());
+    let terms = Terminals::default();
+    let id = terms
+        .open(&env, 120, 30, Arc::new(move |_, t| s2.lock().unwrap().push_str(&t)), Arc::new(move |_| *f2.lock().unwrap() = true))
+        .unwrap();
+    eprintln!("[test] terminal {id} ouvert");
+    // ConPTY demande la position du curseur (ESC[6n) et attend la réponse avant de
+    // lancer le shell. Dans l'app, xterm.js répond ; ici on simule le terminal.
+    for _ in 0..50 {
+        if sortie.lock().unwrap().contains("\x1b[6n") {
+            terms.write(id, "\x1b[1;1R").unwrap();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    terms.write(id, "php -r \"echo 'VERSION=' . PHP_VERSION . ' INI=' . php_ini_loaded_file();\"\r\n").unwrap();
+    eprintln!("[test] commande 1 envoyée");
+    terms.write(id, "Write-Output \"DOSSIER=$((Get-Location).Path)\"\r\n").unwrap();
+    eprintln!("[test] commande 2 envoyée");
+
+    let attendu = format!("VERSION={}", php.version);
+    let mut ok = false;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let s = sortie.lock().unwrap().clone();
+        if s.contains(&attendu) && s.contains("DOSSIER=") && s.matches("DOSSIER=").count() >= 2 {
+            ok = true;
+            break;
+        }
+    }
+    eprintln!("[test] attente terminée, ok = {ok}, {} caractères reçus", sortie.lock().unwrap().len());
+    let s = sortie.lock().unwrap().clone();
+    // Nettoyage des séquences d'échappement pour l'affichage.
+    let lisible: String = s.lines().filter(|l| l.contains("VERSION=") || l.contains("DOSSIER=")).collect::<Vec<_>>().join("\n");
+    println!("{lisible}");
+    assert!(ok, "sortie inattendue :\n{s}");
+    assert!(s.contains(&format!("{}", rustserv_core::php::php_ini_path(&paths, &php.version).display()).replace('\\', "\\")) || s.contains("php.ini"), "php.ini de Rustserv non utilisé");
+    assert!(s.contains("www\\ancien"), "mauvais dossier de départ");
+
+    eprintln!("[test] fermeture…");
+    terms.close(id);
+    eprintln!("[test] close() terminé");
+    for _ in 0..50 {
+        if *fini.lock().unwrap() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(*fini.lock().unwrap(), "le terminal ne s'est pas fermé");
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

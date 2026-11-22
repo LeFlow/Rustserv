@@ -5,4 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# Bibliothèque partagée (logique du fichier hosts, sans dépendance) + exécutable.
+[lib]
+name = "rustserv_helper"
+
+[[bin]]
+name = "rustserv-helper"
+path = "src/main.rs"
+
 [dependencies]
