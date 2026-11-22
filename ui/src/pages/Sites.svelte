@@ -25,6 +25,13 @@
   let occupe = $state<Record<string, boolean>>({});
   let importOuvert = $state(false);
   let mariadbs = $state<MariadbVersion[]>([]);
+  /** Site dont le menu « Ouvrir » est déplié (un seul à la fois). */
+  let menuOuvert = $state<string | null>(null);
+
+  function ouvrir(url: string) {
+    menuOuvert = null;
+    openUrl(url);
+  }
 
   /** Change la MariaDB d'un site : sa base est copiée vers la nouvelle version. */
   function choisirMariadb(s: SiteView, valeur: string) {
@@ -90,6 +97,8 @@
 {#if importOuvert}
   <Import fermer={() => (importOuvert = false)} termine={charger} />
 {/if}
+
+<svelte:window onclick={() => (menuOuvert = null)} />
 
 {#if erreur}<pre class="erreur">{erreur}</pre>{/if}
 {#if info}<p class="info">{info}</p>{/if}
@@ -168,13 +177,23 @@
             {/if}
           </td>
           <td class="liens">
-            {#if declare(s)}
-              <button class="lien" onclick={() => openUrl(urlSite(s, false))}>http ↗</button>
-              {#if httpsActif}<button class="lien" onclick={() => openUrl(urlSite(s, true))}>🔒 https ↗</button>{/if}
-            {:else}
-              <span class="muted petit" title={t("sites.domaine_non_declare")}>{t("sites.domaine_a_declarer")}</span>
-            {/if}
-            <button class="lien" onclick={() => openUrl(s.local_url)}>localhost ↗</button>
+            <!-- Menu « Ouvrir » : adresses du site et dossier, regroupés pour garder une ligne compacte. -->
+            <div class="menu">
+              <button onclick={(e) => { e.stopPropagation(); menuOuvert = menuOuvert === s.name ? null : s.name; }}>{t("sites.ouvrir_menu")} ▾</button>
+              {#if menuOuvert === s.name}
+                <div class="menu-liste">
+                  {#if declare(s)}
+                    {#if httpsActif}<button onclick={() => ouvrir(urlSite(s, true))}>🔒 {urlSite(s, true)}</button>{/if}
+                    <button onclick={() => ouvrir(urlSite(s, false))}>🌐 {urlSite(s, false)}</button>
+                  {:else}
+                    <span class="muted petit" title={t("sites.domaine_non_declare")}>{t("sites.domaine_a_declarer")}</span>
+                  {/if}
+                  <button onclick={() => ouvrir(s.local_url)}>🖥 {s.local_url}</button>
+                  <hr />
+                  <button onclick={() => { menuOuvert = null; api.openPath(s.dir).catch((e) => (erreur = tErreur(e))); }}>📁 {t("sites.ouvrir_dossier")}</button>
+                </div>
+              {/if}
+            </div>
           </td>
           <td class="actions">
             {#if s.wordpress}
@@ -184,7 +203,6 @@
               })}>🔧 {occupe["wp-" + s.name] ? t("sites.wp_fix_en_cours") : t("sites.wp_fix")}</button>
             {/if}
             <button onclick={() => terminal(s)}>&gt;_ {t("sites.terminal")}</button>
-            <button class="lien" title={s.dir} onclick={() => api.openPath(s.dir).catch((e) => (erreur = tErreur(e)))}>📁</button>
           </td>
         </tr>
       {/each}
@@ -201,7 +219,12 @@
   th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
   td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
   select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
-  .liens button { margin-right: 6px; }
+  .menu { position: relative; display: inline-block; }
+  .menu-liste { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 260px; display: flex; flex-direction: column; padding: 6px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
+  .menu-liste button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; white-space: nowrap; }
+  .menu-liste button:hover { background: var(--bg-hover); }
+  .menu-liste hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
+  .menu-liste span { padding: 6px 10px; }
   .actions { text-align: right; white-space: nowrap; }
   .petit { font-size: 12px; }
   .avert { color: var(--accent); }

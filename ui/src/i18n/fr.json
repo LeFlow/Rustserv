@@ -163,7 +163,9 @@
     "db_deplacee": "{site} : base « {base} » copiée de MariaDB {de} vers {vers} (port {port}). L'ancienne copie est conservée.",
     "db_sans_base": "{site} utilise maintenant MariaDB {vers} (aucune base détectée dans sa configuration).",
     "db_inchange": "{site} : version de MariaDB inchangée.",
-    "db_defaut": "MariaDB par défaut ({version})"
+    "db_defaut": "MariaDB par défaut ({version})",
+    "ouvrir_menu": "Ouvrir",
+    "ouvrir_dossier": "Ouvrir le dossier du site"
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
