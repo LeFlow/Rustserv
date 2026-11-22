@@ -34,17 +34,84 @@ fn php_outils(paths: &Paths, settings: &Settings, installer: &Installer) -> Resu
     Ok((php, ini))
 }
 
+/// Composer installé (le plus récent), ou installé depuis le catalogue s'il manque.
+async fn ensure_composer(installer: &Installer, catalog: &Catalog) -> Result<InstalledPackage> {
+    if let Some(c) = installer.installed()?.into_iter().filter(|p| p.package == "composer").max_by(|a, b| version::cmp(&a.version, &b.version)) {
+        return Ok(c);
+    }
+    // Repli sur le catalogue intégré si le catalogue local ne connaît pas Composer.
+    let integre = Catalog::embedded()?;
+    let r = catalog
+        .latest("composer", None)
+        .or_else(|| integre.latest("composer", None))
+        .ok_or_else(|| Error::PaquetInconnu { id: "composer".into() })?;
+    installer.install("composer", r, &AtomicBool::new(false), &|_| {}).await
+}
+
 /// Installe (ou met à jour) les outils d'analyse ; installe Composer s'il manque.
 pub async fn install_tools(paths: &Paths, settings: &Settings, installer: &Installer, catalog: &Catalog) -> Result<ToolsStatus> {
-    let composer = match installer.installed()?.into_iter().filter(|p| p.package == "composer").max_by(|a, b| version::cmp(&a.version, &b.version)) {
-        Some(c) => c,
-        None => {
-            let r = catalog.latest("composer", None).ok_or_else(|| Error::PaquetInconnu { id: "composer".into() })?;
-            installer.install("composer", r, &AtomicBool::new(false), &|_| {}).await?
-        }
-    };
+    let composer = ensure_composer(installer, catalog).await?;
     let (php, ini) = php_outils(paths, settings, installer)?;
     tools::install(paths, &php, &ini, &composer).await
+}
+
+/// Installe PHPUnit ou Pest dans le projet (`composer require --dev`).
+///
+/// Composer s'exécute avec la **plus ancienne** des versions de PHP demandées : il
+/// choisit ainsi la version du framework compatible avec toutes (ex. PHPUnit 9.6 si
+/// PHP 7.4 fait partie des versions testées). Renvoie la version installée.
+pub async fn install_test_framework(
+    paths: &Paths,
+    settings: &Settings,
+    installer: &Installer,
+    catalog: &Catalog,
+    site: &str,
+    kind: TestKind,
+    versions: &[String],
+) -> Result<String> {
+    let paquet = match kind {
+        TestKind::Phpunit => "phpunit/phpunit",
+        TestKind::Pest => "pestphp/pest",
+        TestKind::Script => return Err(Error::Interne("rien à installer pour un script".into())),
+    };
+    let projet = site_dir(paths, settings, site)?;
+    let composer = ensure_composer(installer, catalog).await?;
+    let installed = installer.installed()?;
+    let php = installed
+        .iter()
+        .filter(|p| p.package == "php" && (versions.is_empty() || versions.contains(&p.version)))
+        .min_by(|a, b| version::cmp(&a.version, &b.version))
+        .cloned()
+        .ok_or_else(|| Error::AucuneVersion { id: "php".into() })?;
+    let ini = ensure_php_ini(paths, &php.path, &php.version, settings)?;
+    let phar = composer.path.join("composer.phar").display().to_string();
+
+    // Projet sans composer.json : « composer config » en exige un (« require » le créerait seul).
+    let cj = projet.join("composer.json");
+    if !cj.exists() {
+        std::fs::write(&cj, "{}\n").map_err(|e| Error::fichier(&cj, e))?;
+    }
+    let mut etapes: Vec<Vec<String>> = Vec::new();
+    if kind == TestKind::Pest {
+        // Pest est un plugin Composer : il doit être autorisé explicitement (mode non interactif).
+        etapes.push(vec![phar.clone(), "config".into(), "--no-plugins".into(), "allow-plugins.pestphp/pest-plugin".into(), "true".into()]);
+    }
+    etapes.push(vec![
+        phar.clone(),
+        "require".into(),
+        "--dev".into(),
+        paquet.into(),
+        "--with-all-dependencies".into(),
+        "--no-interaction".into(),
+        "--no-progress".into(),
+        "--no-ansi".into(),
+    ]);
+    tracing::info!(site, paquet, php = %php.version, "installation du framework de tests");
+    for args in etapes {
+        tools::run_composer(paths, &php, &ini, &projet, &args).await?;
+    }
+    tools::installed_version(&projet, paquet)
+        .ok_or_else(|| Error::CompatEchec { outil: "Composer".into(), detail: format!("{paquet} absent après installation") })
 }
 
 /// Lance des tests ou un script sur les versions de PHP demandées (versions complètes).

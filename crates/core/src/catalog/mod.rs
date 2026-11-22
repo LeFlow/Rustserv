@@ -138,14 +138,49 @@ impl Catalog {
     }
 
     /// Charge `catalog.json` de la racine portable, en le créant depuis la
-    /// version embarquée s'il n'existe pas encore.
+    /// version embarquée s'il n'existe pas encore. Les paquets et versions
+    /// apportés par une nouvelle version de Rustserv y sont **ajoutés**
+    /// (rien n'est retiré ni modifié : les ajouts de l'utilisateur sont conservés).
     pub fn load_or_init(paths: &Paths) -> Result<Self> {
         let file = paths.catalog_file();
         if !file.exists() {
             std::fs::write(&file, EMBEDDED).map_err(|e| Error::fichier(&file, e))?;
             tracing::info!(fichier = %file.display(), "catalogue initialisé depuis la version intégrée");
         }
-        Self::load(&file)
+        let mut cat = Self::load(&file)?;
+        let ajouts = cat.absorb(&Self::embedded()?);
+        if !ajouts.is_empty() {
+            cat.save(&file)?;
+            tracing::info!(?ajouts, "catalogue complété par la version intégrée");
+        }
+        Ok(cat)
+    }
+
+    /// Ajoute les paquets et versions de `autre` absents de ce catalogue.
+    /// Renvoie la liste des ajouts (« composer », « php 8.3.38 »…).
+    pub fn absorb(&mut self, autre: &Catalog) -> Vec<String> {
+        let mut ajouts = Vec::new();
+        for (id, pkg) in &autre.packages {
+            match self.packages.get_mut(id) {
+                None => {
+                    self.packages.insert(id.clone(), pkg.clone());
+                    ajouts.push(id.clone());
+                }
+                Some(local) => {
+                    for r in &pkg.releases {
+                        if !local.releases.iter().any(|x| x.version == r.version) {
+                            local.releases.push(r.clone());
+                            ajouts.push(format!("{id} {}", r.version));
+                        }
+                    }
+                    local.releases.sort_by(|a, b| version::cmp(&b.version, &a.version));
+                }
+            }
+        }
+        if !ajouts.is_empty() && autre.updated > self.updated {
+            self.updated = autre.updated.clone();
+        }
+        ajouts
     }
 
     /// Vérifie la cohérence du catalogue ; renvoie la liste des problèmes (vide = OK).
@@ -325,6 +360,31 @@ mod tests {
         let f = t.path().join("c.json");
         Catalog::parse(MINI, "test").unwrap().save(&f).unwrap();
         assert!(Catalog::load(&f).is_ok(), "aller-retour fichier");
+    }
+
+    /// Cas réel : un catalog.json créé par une ancienne version (sans Composer)
+    /// doit recevoir Composer au démarrage, sans perdre les ajouts de l'utilisateur.
+    #[test]
+    fn ancien_catalogue_complete_au_demarrage() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        let mut ancien = Catalog::embedded().unwrap();
+        ancien.packages.remove("composer");
+        ancien.updated = "2026-01-01".into();
+        // Version ajoutée à la main par l'utilisateur.
+        let mut perso = ancien.release("php", &ancien.latest("php", Some("8.3")).unwrap().version.clone()).unwrap().clone();
+        perso.version = "8.3.99".into();
+        ancien.packages.get_mut("php").unwrap().releases.push(perso);
+        ancien.save(&paths.catalog_file()).unwrap();
+
+        let cat = Catalog::load_or_init(&paths).unwrap();
+        assert!(cat.packages.contains_key("composer"), "Composer ajouté");
+        assert!(cat.release("php", "8.3.99").is_ok(), "ajout de l'utilisateur conservé");
+        assert_eq!(cat.updated, Catalog::embedded().unwrap().updated);
+        // Enregistré : le prochain chargement ne rajoute rien.
+        let mut relu = Catalog::load(&paths.catalog_file()).unwrap();
+        assert!(relu.absorb(&Catalog::embedded().unwrap()).is_empty());
     }
 
     #[test]

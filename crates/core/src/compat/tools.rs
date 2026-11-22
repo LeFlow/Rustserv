@@ -68,29 +68,28 @@ pub fn status(paths: &Paths) -> ToolsStatus {
     ToolsStatus { installes: s.phpcs.is_some() && s.phpcompatibility.is_some() && s.phpstan.is_some() && phpcs_bin(paths).is_file(), ..s }
 }
 
-/// Installe ou met à jour les outils avec Composer (5 min max).
-/// `COMPOSER_HOME` est placé dans le dossier portable (aucune trace dans le profil Windows).
-pub async fn install(paths: &Paths, php: &InstalledPackage, ini: &Path, composer: &InstalledPackage) -> Result<ToolsStatus> {
-    let dir = tools_dir(paths);
-    std::fs::create_dir_all(&dir).map_err(|e| Error::fichier(&dir, e))?;
-    let cj = dir.join("composer.json");
-    std::fs::write(&cj, COMPOSER_JSON).map_err(|e| Error::fichier(&cj, e))?;
-    let phar = composer.path.join("composer.phar");
-    let home = paths.tmp().join("composer");
+/// Version d'un paquet installé par Composer dans un projet (`vendor/composer/installed.json`).
+pub fn installed_version(projet: &Path, paquet: &str) -> Option<String> {
+    let txt = std::fs::read_to_string(projet.join("vendor/composer/installed.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
+    let liste = v.get("packages").unwrap_or(&v).as_array()?.clone();
+    liste.iter().find(|p| p["name"] == paquet).and_then(|p| p["version"].as_str()).map(|s| s.trim_start_matches('v').to_string())
+}
 
+/// Exécute Composer (`args` commence par le chemin de composer.phar) dans `cwd`, 5 min max.
+/// `COMPOSER_HOME` est placé dans le dossier portable (aucune trace dans le profil Windows).
+pub async fn run_composer(paths: &Paths, php: &InstalledPackage, ini: &Path, cwd: &Path, args: &[String]) -> Result<()> {
     let mut cmd = tokio::process::Command::new(php.path.join(platform::exe_name("php")));
     cmd.arg("-c")
         .arg(ini)
-        .arg(&phar)
-        .args(["update", "--no-interaction", "--no-progress", "--no-ansi", "--prefer-dist"])
-        .current_dir(&dir)
-        .env("COMPOSER_HOME", &home)
+        .args(args)
+        .current_dir(cwd)
+        .env("COMPOSER_HOME", paths.tmp().join("composer"))
         .env("PATH", format!("{};{}", php.path.display(), std::env::var("PATH").unwrap_or_default()))
         .env("PHPRC", ini.parent().unwrap_or(ini))
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     cmd.creation_flags(platform::CREATE_NO_WINDOW);
-    tracing::info!(php = %php.version, "installation des outils d'analyse (Composer)");
     let out = tokio::time::timeout(Duration::from_secs(300), cmd.output())
         .await
         .map_err(|_| Error::CompatEchec { outil: "Composer".into(), detail: "délai de 5 minutes dépassé".into() })?
@@ -100,6 +99,19 @@ pub async fn install(paths: &Paths, php: &InstalledPackage, ini: &Path, composer
         let lignes: Vec<&str> = detail.lines().filter(|l| !l.trim().is_empty()).collect();
         return Err(Error::CompatEchec { outil: "Composer".into(), detail: lignes[lignes.len().saturating_sub(15)..].join("\n") });
     }
+    Ok(())
+}
+
+/// Installe ou met à jour les outils avec Composer (5 min max).
+pub async fn install(paths: &Paths, php: &InstalledPackage, ini: &Path, composer: &InstalledPackage) -> Result<ToolsStatus> {
+    let dir = tools_dir(paths);
+    std::fs::create_dir_all(&dir).map_err(|e| Error::fichier(&dir, e))?;
+    let cj = dir.join("composer.json");
+    std::fs::write(&cj, COMPOSER_JSON).map_err(|e| Error::fichier(&cj, e))?;
+    let phar = composer.path.join("composer.phar").display().to_string();
+    tracing::info!(php = %php.version, "installation des outils d'analyse (Composer)");
+    let args: Vec<String> = [phar.as_str(), "update", "--no-interaction", "--no-progress", "--no-ansi", "--prefer-dist"].iter().map(|s| s.to_string()).collect();
+    run_composer(paths, php, ini, &dir, &args).await?;
     let s = status(paths);
     if !s.installes {
         return Err(Error::CompatEchec { outil: "Composer".into(), detail: "outils absents après installation".into() });

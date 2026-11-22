@@ -76,6 +76,7 @@ fn main() {
             compat_commands::compat_tools_status,
             compat_commands::compat_tools_install,
             compat_commands::compat_run,
+            compat_commands::compat_install_framework,
             compat_commands::compat_phpcs,
             compat_commands::compat_phpstan,
         ])

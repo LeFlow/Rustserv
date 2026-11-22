@@ -267,6 +267,8 @@ export const api = {
   compatToolsInstall: () => invoke<ToolsStatus>("compat_tools_install"),
   compatRun: (site: string, kind: TypeTest, script: string | null, versions: string[]) =>
     invoke<RunResult[]>("compat_run", { site, kind, script, versions }),
+  compatInstallFramework: (site: string, kind: TypeTest, versions: string[]) =>
+    invoke<string>("compat_install_framework", { site, kind, versions }),
   compatPhpcs: (site: string, min: string, max: string | null) => invoke<Rapport>("compat_phpcs", { site, min, max }),
   compatPhpstan: (site: string, niveau: number, cible: string) => invoke<Rapport>("compat_phpstan", { site, niveau, cible }),
 

@@ -531,6 +531,51 @@ async fn retrocompatibilite_reelle() {
     assert!(rap.fichiers.iter().any(|f| f.chemin == "legacy.php" && f.messages.iter().any(|m| m.message.contains("each"))));
 }
 
+/// Installation de PHPUnit / Pest dans un projet neuf (sans composer.json), puis exécution.
+#[tokio::test]
+#[ignore]
+async fn installation_phpunit_et_pest() {
+    use rustserv_core::compat::{ops, runner::{Statut, TestKind}};
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    installe(&inst, &cat, "php", Some("7.4")).await;
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    let settings = Settings::default();
+    let v74 = cat.latest("php", Some("7.4")).unwrap().version.clone();
+    let v83 = cat.latest("php", Some("8.3")).unwrap().version.clone();
+
+    // PHPUnit pour 7.4 + 8.3 → Composer doit choisir une version compatible 7.4 (9.x).
+    let site = paths.www().join("neuf-phpunit");
+    let _ = std::fs::remove_dir_all(&site);
+    std::fs::create_dir_all(site.join("tests")).unwrap();
+    std::fs::write(site.join("tests/SommeTest.php"), "<?php\nuse PHPUnit\\Framework\\TestCase;\nfinal class SommeTest extends TestCase {\n    public function testSomme(): void { $this->assertSame(4, 2 + 2); }\n}\n").unwrap();
+    let versions = vec![v74.clone(), v83.clone()];
+    let assert_absent = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions).await.unwrap_err();
+    assert_eq!(assert_absent.code(), "compat.phpunit_absent");
+    let v = ops::install_test_framework(&paths, &settings, &inst, &cat, "neuf-phpunit", TestKind::Phpunit, &versions).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("PHPUnit installé : {v}");
+    assert!(v.starts_with("9."), "PHPUnit compatible PHP 7.4 attendu, obtenu {v}");
+    let r = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions).await.unwrap();
+    for x in &r {
+        println!("  PHPUnit PHP {} → {:?} {:?}", x.version, x.statut, x.resume);
+        assert_eq!(x.statut, Statut::Reussi, "{}", x.sortie);
+    }
+
+    // Pest pour PHP 8.3 seulement.
+    let site = paths.www().join("neuf-pest");
+    let _ = std::fs::remove_dir_all(&site);
+    std::fs::create_dir_all(site.join("tests")).unwrap();
+    std::fs::write(site.join("tests/SommeTest.php"), "<?php\ntest('somme', function () {\n    expect(2 + 2)->toBe(4);\n});\n").unwrap();
+    let v = ops::install_test_framework(&paths, &settings, &inst, &cat, "neuf-pest", TestKind::Pest, &[v83.clone()]).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("Pest installé : {v}");
+    let r = ops::run_tests(&paths, &settings, &inst, "neuf-pest", TestKind::Pest, None, &[v83.clone()]).await.unwrap();
+    println!("  Pest PHP {} → {:?} {:?}", r[0].version, r[0].statut, r[0].resume);
+    assert_eq!(r[0].statut, Statut::Reussi, "{}", r[0].sortie);
+    assert_eq!(r[0].resume.as_ref().map(|s| s.tests), Some(1));
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

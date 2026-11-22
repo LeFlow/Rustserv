@@ -19,6 +19,10 @@
   let phps = $state<PhpVersionView[]>([]);
   let site = $state("");
   let erreur = $state<string | null>(null);
+  /** PHPUnit/Pest absent du projet : proposer de l'installer. */
+  let frameworkAbsent = $state<TypeTest | null>(null);
+  let installationFramework = $state(false);
+  let info = $state<string | null>(null);
 
   // --- Tests
   let type = $state<TypeTest>("phpunit");
@@ -53,18 +57,47 @@
   const versionsChoisies = $derived(phps.filter((v) => choisies[v.version]).map((v) => v.version));
 
   async function lancer() {
-    erreur = null;
+    erreur = info = null;
+    frameworkAbsent = null;
     resultats = null;
     sortieVisible = null;
     enCours = true;
     try {
       resultats = await api.compatRun(site, type, type === "script" ? script : null, versionsChoisies);
     } catch (e) {
-      erreur = tErreur(e);
+      const code = (e as { code?: string })?.code;
+      if (code === "compat.phpunit_absent" || code === "compat.pest_absent") {
+        frameworkAbsent = type;
+      } else {
+        erreur = tErreur(e);
+      }
     } finally {
       enCours = false;
     }
   }
+
+  /** Installe PHPUnit/Pest dans le projet puis relance les tests. */
+  async function installerFramework() {
+    if (!frameworkAbsent) return;
+    erreur = null;
+    installationFramework = true;
+    try {
+      const v = await api.compatInstallFramework(site, frameworkAbsent, versionsChoisies);
+      info = t("compat.framework_installe", { outil: nomFramework(frameworkAbsent), version: v });
+      frameworkAbsent = null;
+      await lancer();
+      info = t("compat.framework_installe", { outil: nomFramework(type), version: v });
+    } catch (e) {
+      erreur = tErreur(e);
+    } finally {
+      installationFramework = false;
+    }
+  }
+
+  const nomFramework = (k: TypeTest) => (k === "pest" ? "Pest" : "PHPUnit");
+  const plusAncienne = $derived(
+    [...versionsChoisies].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))[0] ?? "",
+  );
 
   async function installerOutils() {
     erreur = null;
@@ -115,6 +148,20 @@
 
 {#if sites.length === 0}<p class="muted">{t("sites.aucun")}</p>{/if}
 {#if erreur}<pre class="erreur">{erreur}</pre>{/if}
+{#if info}<p class="info">{info}</p>{/if}
+
+{#if onglet === "tests" && frameworkAbsent}
+  <div class="bandeau">
+    <div>
+      <strong>{t("compat.framework_absent", { outil: nomFramework(frameworkAbsent), site })}</strong>
+      <div class="petit">{t("compat.framework_explication", { outil: nomFramework(frameworkAbsent), version: plusAncienne })}</div>
+      <div class="muted petit">{t("compat.framework_composer")}</div>
+    </div>
+    <button class="primaire" disabled={installationFramework} onclick={installerFramework}>
+      {installationFramework ? t("compat.framework_installation") : `⬇ ${t("compat.framework_installer", { outil: nomFramework(frameworkAbsent) })}`}
+    </button>
+  </div>
+{/if}
 
 {#if onglet === "tests" && sites.length}
   <section class="carte">
@@ -256,6 +303,8 @@
   .statut.echec { background: #ca8a04; }
   .statut.erreur, .statut.delai_depasse { background: var(--danger); }
   .groupe { font-weight: 600; }
+  .bandeau { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-card); }
+  .info { color: var(--ok); }
   .sortie { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 360px; overflow: auto; white-space: pre-wrap; margin: 0; }
   .err { color: var(--danger); }
   .ok { color: var(--ok); }

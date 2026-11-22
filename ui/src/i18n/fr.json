@@ -338,6 +338,12 @@
     "gravite": {
       "erreur": "erreur",
       "avertissement": "avertissement"
-    }
+    },
+    "framework_absent": "{outil} n'est pas encore installé dans le site « {site} ».",
+    "framework_explication": "Rustserv peut l'installer pour vous : Composer choisira la version de {outil} compatible avec PHP {version} et les versions suivantes cochées.",
+    "framework_composer": "Il sera ajouté comme dépendance de développement (composer.json et dossier vendor/ du site).",
+    "framework_installer": "Installer {outil} dans ce projet",
+    "framework_installation": "Installation par Composer…",
+    "framework_installe": "{outil} {version} installé dans le projet."
   }
 }

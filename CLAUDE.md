@@ -134,6 +134,10 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   PHP_CodeSniffer ^4, **PHPCompatibility ^10.0@alpha** (la 9.3.5 stable de 2019 ignore PHP 8),
   PHPStan ^2.1, plugin dealerdirect. Composer installé depuis le catalogue s'il manque.
   Les outils tournent avec le PHP installé le plus récent.
+- Installation de PHPUnit/Pest dans un site (`ops::install_test_framework`) : `composer require --dev`
+  exécuté avec la **plus ancienne** version de PHP cochée → Composer choisit la version compatible
+  (ex. PHPUnit 9.6 si 7.4 est cochée). Pest : `allow-plugins.pestphp/pest-plugin` autorisé avant ;
+  un `composer.json` minimal `{}` est créé s'il manque (`composer config` en exige un).
 - `analysis` : phpcs `--standard=PHPCompatibility --runtime-set testVersion 7.4-8.5 --report=json`
   (vendor, node_modules, storage, var/cache ignorés) ; PHPStan avec une config neon temporaire
   (`phpVersion` 80300, `excludePaths.analyse` + `scanDirectories` vendor). JSON extrait entre le premier
@@ -148,7 +152,9 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 - Sources : PHP = `windows.php.net/downloads/releases/releases.json` (+ `/archives/`) ;
   Nginx = nginx.org (pas de SHA publié : calculé par nous) ; Apache = apachelounge.com
   (`<zip>.txt` contient le SHA256) ; MariaDB = `downloads.mariadb.org/rest-api/mariadb/<branche>/latest/`.
-- Mise à jour du catalogue intégré : copié dans la racine portable au 1er lancement seulement.
+- Catalogue intégré copié dans la racine portable au 1er lancement ; ensuite, à **chaque démarrage**,
+  `Catalog::absorb` y **ajoute** les paquets/versions nouveaux de la version intégrée (rien n'est
+  retiré ni modifié). Bug corrigé : un catalog.json de la phase 1 n'avait jamais reçu Composer.
   Si `catalog.json` est corrompu → repli sur le catalogue intégré + avertissement dans l'UI.
 
 ## Choix techniques validés
@@ -209,7 +215,6 @@ Tests réels (binaires téléchargés dans `target/pile-test`, ~150 Mo) :
 - Non fait : annulation d'une analyse en cours (délais max : tests 10 min, analyses 15 min)
 
 ### Pistes pour la suite
-- Proposer la mise à jour du catalogue intégré quand il est plus récent que catalog.json
 - Boîte de dialogue native si l'app ne peut pas démarrer (aujourd'hui : message console)
 - Annulation des analyses ; DNS local + NRPT (sous-domaines sans fichier hosts)
 - Les tests réels partagent `target/pile-test` : les lancer avec `--test-threads=1`, machine peu chargée

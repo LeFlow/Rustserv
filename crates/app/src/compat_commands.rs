@@ -32,6 +32,13 @@ pub async fn compat_run(
     ops::run_tests(&state.paths, &state.settings(), &state.installer, &site, kind, script, &versions).await
 }
 
+/// Installe PHPUnit ou Pest dans le projet (compatible avec la plus ancienne version cochée).
+#[tauri::command]
+pub async fn compat_install_framework(state: State<'_, AppState>, site: String, kind: TestKind, versions: Vec<String>) -> Result<String> {
+    let catalog = state.catalog.read().map_err(|e| Error::Interne(e.to_string()))?.clone();
+    ops::install_test_framework(&state.paths, &state.settings(), &state.installer, &catalog, &site, kind, &versions).await
+}
+
 #[tauri::command]
 pub async fn compat_phpcs(state: State<'_, AppState>, site: String, min: String, max: Option<String>) -> Result<Rapport> {
     ops::phpcompatibility(&state.paths, &state.settings(), &state.installer, &site, &min, max.as_deref()).await
