@@ -2,9 +2,11 @@
 //! configurations (gabarits), les valide (`nginx -t`, `httpd -t`) et produit
 //! les [`ServiceSpec`] à confier au superviseur.
 //!
-//! Identifiants de service : `nginx`, `apache`, `mariadb`, `php-<version>#<n>`.
+//! Identifiants de service : `nginx`, `apache`, `php-<version>#<n>`, et pour les bases
+//! `mariadb`, `mysql`, `postgresql` (instance par défaut) ou `<moteur>-<branche>`.
 
 use crate::catalog::{version, InstalledPackage};
+use crate::db::Moteur;
 use crate::error::{Error, Result};
 use crate::paths::{slash, Paths};
 use crate::php::{self, pool_ports};
@@ -18,6 +20,8 @@ use std::time::Duration;
 pub const NGINX: &str = "nginx";
 pub const APACHE: &str = "apache";
 pub const MARIADB: &str = "mariadb";
+pub const MYSQL: &str = "mysql";
+pub const POSTGRESQL: &str = "postgresql";
 
 /// Identifiant du n-ième processus du pool d'une version de PHP.
 pub fn php_service_id(version: &str, n: usize) -> String {
@@ -101,14 +105,14 @@ impl<'a> Stack<'a> {
             }
             tracing::warn!(package, version = w, "version choisie absente, utilisation de la plus récente");
         }
-        // MariaDB : chaque branche a son propre dossier de données. Installer une nouvelle
+        // Bases de données : chaque branche a son propre dossier de données. Installer une nouvelle
         // branche ne doit pas faire basculer silencieusement sur une base VIDE : on garde la
         // version la plus récente dont le dossier de données existe déjà.
-        if package == MARIADB {
+        if let Some(m) = Moteur::depuis_paquet(package) {
             let avec_donnees = self
                 .installed
                 .iter()
-                .filter(|p| p.package == MARIADB && self.mariadb_datadir(p).join("mysql").is_dir())
+                .filter(|p| p.package == package && m.donnees_initialisees(&self.db_datadir(p)))
                 .max_by(|a, b| version::cmp(&a.version, &b.version));
             if let Some(p) = avec_donnees {
                 return Ok(p);
@@ -341,65 +345,117 @@ impl<'a> Stack<'a> {
 }
 
 impl<'a> Stack<'a> {
-    /// Dossier de données MariaDB : un par branche (12.3, 11.4…), car une
-    /// montée de version majeure nécessite une migration (mariadb-upgrade).
-    pub fn mariadb_datadir(&self, pkg: &InstalledPackage) -> PathBuf {
-        self.paths.data().join(format!("mariadb-{}", version::branch(&pkg.version)))
-    }
-
-    // ------------------------------------------------------------ MariaDB multi-versions
+    // ------------------------------------------------------------ Bases de données
     //
-    // Comme pour PHP, on raisonne par **branche** (« 11.4 ») : chaque branche a son dossier
-    // de données (`data/mariadb-11.4`), son port et son service. L'instance **par défaut**
-    // garde le port des réglages (3306) et le nom de service historique « mariadb ».
+    // MariaDB, MySQL et PostgreSQL : comme pour PHP, on raisonne par **branche** (« 11.4 »,
+    // « 8.4 », « 17 ») : chaque branche a son dossier de données (`data/<moteur>-<branche>`),
+    // son port et son service. L'instance **par défaut** d'un moteur garde le port des
+    // réglages et le nom de service du moteur (« mariadb », « mysql », « postgresql »).
 
-    /// MariaDB par défaut (celle qui contient les données si aucun choix explicite).
-    pub fn default_mariadb(&self) -> Result<&'a InstalledPackage> {
-        self.pick(MARIADB, self.settings.versions.mariadb.as_deref())
+    /// Moteur d'un paquet installé.
+    pub fn moteur_de(pkg: &InstalledPackage) -> Moteur {
+        Moteur::depuis_paquet(&pkg.package).unwrap_or(Moteur::Mariadb)
     }
 
-    /// Version installée la plus récente d'une branche de MariaDB.
-    pub fn mariadb_for_branch(&self, branch: &str) -> Option<&'a InstalledPackage> {
+    fn branche(pkg: &InstalledPackage) -> String {
+        Self::moteur_de(pkg).branche(&pkg.version)
+    }
+
+    /// Dossier de données : un par branche, car une montée de version majeure
+    /// nécessite une migration (mariadb-upgrade, pg_upgrade…).
+    pub fn db_datadir(&self, pkg: &InstalledPackage) -> PathBuf {
+        self.paths.data().join(format!("{}-{}", pkg.package, Self::branche(pkg)))
+    }
+
+    pub fn mariadb_datadir(&self, pkg: &InstalledPackage) -> PathBuf {
+        self.db_datadir(pkg)
+    }
+
+    fn version_voulue(&self, m: Moteur) -> Option<&'a str> {
+        match m {
+            Moteur::Mariadb => self.settings.versions.mariadb.as_deref(),
+            Moteur::Mysql => self.settings.versions.mysql.as_deref(),
+            Moteur::Postgresql => self.settings.versions.postgresql.as_deref(),
+        }
+    }
+
+    fn port_defaut(&self, m: Moteur) -> u16 {
+        match m {
+            Moteur::Mariadb => self.settings.ports.mariadb,
+            Moteur::Mysql => self.settings.ports.mysql,
+            Moteur::Postgresql => self.settings.ports.postgresql,
+        }
+    }
+
+    /// Version par défaut d'un moteur (celle qui contient les données si aucun choix explicite).
+    pub fn default_db(&self, m: Moteur) -> Result<&'a InstalledPackage> {
+        self.pick(m.paquet(), self.version_voulue(m))
+    }
+
+    pub fn default_mariadb(&self) -> Result<&'a InstalledPackage> {
+        self.default_db(Moteur::Mariadb)
+    }
+
+    /// Version installée la plus récente d'une branche d'un moteur.
+    pub fn db_for_branch(&self, m: Moteur, branch: &str) -> Option<&'a InstalledPackage> {
         self.installed
             .iter()
-            .filter(|p| p.package == MARIADB && version::branch(&p.version) == branch)
+            .filter(|p| p.package == m.paquet() && m.branche(&p.version) == branch)
             .max_by(|a, b| version::cmp(&a.version, &b.version))
     }
 
-    /// MariaDB d'un site : son choix s'il est installé, sinon la version par défaut.
-    pub fn site_mariadb(&self, site: &str) -> Result<&'a InstalledPackage> {
-        match self.settings.site_mariadb.get(site).and_then(|b| self.mariadb_for_branch(&version::branch(b))) {
+    pub fn mariadb_for_branch(&self, branch: &str) -> Option<&'a InstalledPackage> {
+        self.db_for_branch(Moteur::Mariadb, branch)
+    }
+
+    /// Base d'un site sans choix explicite : MariaDB par défaut (ou, à défaut, MySQL puis PostgreSQL).
+    pub fn default_site_db(&self) -> Result<&'a InstalledPackage> {
+        self.default_db(Moteur::Mariadb)
+            .or_else(|_| self.default_db(Moteur::Mysql))
+            .or_else(|_| self.default_db(Moteur::Postgresql))
+    }
+
+    /// Base de données d'un site : son choix s'il est installé, sinon la base par défaut.
+    pub fn site_db(&self, site: &str) -> Result<&'a InstalledPackage> {
+        match self.settings.choix_base(site).and_then(|c| self.db_for_branch(c.moteur, &c.branche)) {
             Some(p) => Ok(p),
-            None => self.default_mariadb(),
+            None => self.default_site_db(),
         }
     }
 
     fn est_defaut(&self, pkg: &InstalledPackage) -> bool {
-        self.default_mariadb().is_ok_and(|d| version::branch(&d.version) == version::branch(&pkg.version))
+        let m = Self::moteur_de(pkg);
+        self.default_db(m).is_ok_and(|d| m.branche(&d.version) == m.branche(&pkg.version))
     }
 
-    /// Port d'une instance : celui des réglages pour la version par défaut, sinon
-    /// « 3 » + majeure + mineure sur deux chiffres (11.4 → 31104, 10.11 → 31011).
-    pub fn mariadb_port(&self, pkg: &InstalledPackage) -> u16 {
+    /// Port d'une instance : celui des réglages pour la version par défaut du moteur,
+    /// sinon un port calculé ([`Moteur::port_secondaire`]).
+    pub fn db_port(&self, pkg: &InstalledPackage) -> u16 {
+        let m = Self::moteur_de(pkg);
         if self.est_defaut(pkg) {
-            return self.settings.ports.mariadb;
+            self.port_defaut(m)
+        } else {
+            m.port_secondaire(&pkg.version)
         }
-        let (n, _) = version::parse(&pkg.version);
-        (30000 + n.first().copied().unwrap_or(0) * 100 + n.get(1).copied().unwrap_or(0).min(99)) as u16
     }
 
-    /// Nom de l'instance (service, journaux, dossier temporaire) : « mariadb » ou « mariadb-11.4 ».
-    pub fn mariadb_instance(&self, pkg: &InstalledPackage) -> String {
-        if self.est_defaut(pkg) { MARIADB.to_string() } else { format!("{MARIADB}-{}", version::branch(&pkg.version)) }
+    /// Nom de l'instance (service, journaux, dossier temporaire) : « mysql » ou « mysql-8.0 ».
+    pub fn db_instance(&self, pkg: &InstalledPackage) -> String {
+        if self.est_defaut(pkg) {
+            pkg.package.clone()
+        } else {
+            format!("{}-{}", pkg.package, Self::branche(pkg))
+        }
     }
 
-    /// Versions de MariaDB nécessaires : la version par défaut + celles des sites existants.
-    pub fn mariadb_needed(&self) -> Vec<&'a InstalledPackage> {
-        let mut v: Vec<&InstalledPackage> = self.default_mariadb().into_iter().collect();
+    /// Versions nécessaires d'un moteur : sa version par défaut (s'il est installé) +
+    /// celles des sites existants qui l'utilisent.
+    pub fn db_needed(&self, m: Moteur) -> Vec<&'a InstalledPackage> {
+        let mut v: Vec<&InstalledPackage> = self.default_db(m).into_iter().collect();
         if let Ok(sites) = sites::discover(self.paths, &self.settings.tld) {
             for s in sites {
-                if let Ok(p) = self.site_mariadb(&s.name) {
-                    if !v.iter().any(|x| version::branch(&x.version) == version::branch(&p.version)) {
+                if let Ok(p) = self.site_db(&s.name) {
+                    if Self::moteur_de(p) == m && !v.iter().any(|x| Self::branche(x) == Self::branche(p)) {
                         v.push(p);
                     }
                 }
@@ -408,60 +464,76 @@ impl<'a> Stack<'a> {
         v
     }
 
-    /// Client `mariadb.exe` d'une instance.
-    pub fn mariadb_client(&self, pkg: &InstalledPackage) -> Result<PathBuf> {
-        let bin = pkg.path.join("bin");
-        ["mariadb", "mysql"]
-            .iter()
-            .map(|n| bin.join(platform::exe_name(n)))
-            .find(|p| p.is_file())
-            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadb")) })
+    pub fn mariadb_needed(&self) -> Vec<&'a InstalledPackage> {
+        self.db_needed(Moteur::Mariadb)
+    }
+
+    /// Client en ligne de commande : `mariadb.exe` / `mysql.exe`, ou `psql.exe`.
+    pub fn db_client(&self, pkg: &InstalledPackage) -> Result<PathBuf> {
+        let noms: &[&str] = if Self::moteur_de(pkg).famille_mysql() { &["mariadb", "mysql"] } else { &["psql"] };
+        trouver_exe(&pkg.path.join("bin"), noms)
     }
 
     /// Spec de la MariaDB par défaut.
     pub fn mariadb(&self) -> Result<ServiceSpec> {
-        self.mariadb_spec(self.default_mariadb()?)
+        self.db_spec(self.default_mariadb()?)
     }
 
-    /// Specs de toutes les instances nécessaires.
+    /// Specs de toutes les instances nécessaires d'un moteur.
+    pub fn db_specs(&self, m: Moteur) -> Result<Vec<ServiceSpec>> {
+        self.db_needed(m).into_iter().map(|p| self.db_spec(p)).collect()
+    }
+
     pub fn mariadb_specs(&self) -> Result<Vec<ServiceSpec>> {
-        self.mariadb_needed().into_iter().map(|p| self.mariadb_spec(p)).collect()
+        self.db_specs(Moteur::Mariadb)
     }
 
-    /// Génère `etc/mariadb/my.ini` (défaut) ou `etc/mariadb/my-<branche>.ini`, initialise le
-    /// dossier de données au premier lancement (`mariadb-install-db`) et renvoie la spec.
-    pub fn mariadb_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
-        let bin = pkg.path.join("bin");
-        let datadir = self.mariadb_datadir(pkg);
-        let instance = self.mariadb_instance(pkg);
-        let port = self.mariadb_port(pkg);
-        let conf = if instance == MARIADB {
-            self.paths.etc().join("mariadb").join("my.ini")
-        } else {
-            self.paths.etc().join("mariadb").join(format!("my-{}.ini", version::branch(&pkg.version)))
-        };
-        mkdir(&self.paths.tmp().join(&instance))?;
-
-        // Exécutable serveur : « mariadbd » (récent) ou « mysqld » (anciennes versions).
-        let server = ["mariadbd", "mysqld"]
-            .iter()
-            .map(|n| bin.join(platform::exe_name(n)))
-            .find(|p| p.is_file())
-            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadbd")) })?;
-
-        if !datadir.join("mysql").is_dir() {
-            self.mariadb_init(pkg, &bin, &datadir, port)?;
+    /// Spec d'une instance (dossier de données initialisé au premier lancement).
+    pub fn db_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
+        match Self::moteur_de(pkg) {
+            Moteur::Mariadb => self.mariadb_spec(pkg),
+            Moteur::Mysql => self.mysql_spec(pkg),
+            Moteur::Postgresql => self.postgresql_spec(pkg),
         }
+    }
 
-        let ctx = serde_json::json!({
+    /// `etc/<moteur>/my.ini` (instance par défaut) ou `etc/<moteur>/my-<branche>.ini`.
+    fn my_ini(&self, pkg: &InstalledPackage, instance: &str) -> PathBuf {
+        let dir = self.paths.etc().join(&pkg.package);
+        if instance == pkg.package {
+            dir.join("my.ini")
+        } else {
+            dir.join(format!("my-{}.ini", Self::branche(pkg)))
+        }
+    }
+
+    fn my_ini_ctx(&self, pkg: &InstalledPackage, instance: &str, datadir: &Path, port: u16) -> serde_json::Value {
+        serde_json::json!({
             "instance": instance,
             "server_dir": slash(&pkg.path),
-            "datadir": slash(&datadir),
+            "datadir": slash(datadir),
             "port": port,
             "logs": slash(&self.paths.logs()),
             "tmp": slash(&self.paths.tmp()),
-        });
-        write(&conf, &templates::render(self.paths, templates::MY_INI, ctx)?)?;
+        })
+    }
+
+    /// MariaDB : génère le my.ini, initialise les données (`mariadb-install-db`).
+    pub fn mariadb_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
+        let bin = pkg.path.join("bin");
+        let datadir = self.db_datadir(pkg);
+        let instance = self.db_instance(pkg);
+        let port = self.db_port(pkg);
+        let conf = self.my_ini(pkg, &instance);
+        mkdir(&self.paths.tmp().join(&instance))?;
+        // Exécutable serveur : « mariadbd » (récent) ou « mysqld » (anciennes versions).
+        let server = trouver_exe(&bin, &["mariadbd", "mysqld"])?;
+        if !Moteur::Mariadb.donnees_initialisees(&datadir) {
+            let exe = trouver_exe(&bin, &["mariadb-install-db", "mysql_install_db"])?;
+            let args = vec![format!("--datadir={}", datadir.display()), format!("--port={port}")];
+            self.init_donnees(pkg, &exe, &args, &datadir)?;
+        }
+        write(&conf, &templates::render(self.paths, templates::MY_INI, self.my_ini_ctx(pkg, &instance, &datadir, port))?)?;
 
         let mut s = ServiceSpec::new(&instance, &server, self.paths.logs().join(format!("{instance}.log")));
         // --defaults-file doit être le premier argument.
@@ -476,19 +548,112 @@ impl<'a> Stack<'a> {
         Ok(s)
     }
 
-    /// Crée le dossier de données (utilisateur root sans mot de passe, accès local uniquement).
-    fn mariadb_init(&self, pkg: &InstalledPackage, bin: &Path, datadir: &Path, port: u16) -> Result<()> {
-        let exe = ["mariadb-install-db", "mysql_install_db"]
-            .iter()
-            .map(|n| bin.join(platform::exe_name(n)))
-            .find(|p| p.is_file())
-            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadb-install-db")) })?;
-        tracing::info!(datadir = %datadir.display(), "initialisation du dossier de données MariaDB");
+    /// MySQL : my.ini dédié (`mysql.ini.j2`), données initialisées par
+    /// `mysqld --initialize-insecure` (root sans mot de passe), arrêt par `mysqladmin shutdown`.
+    pub fn mysql_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
+        let bin = pkg.path.join("bin");
+        let datadir = self.db_datadir(pkg);
+        let instance = self.db_instance(pkg);
+        let port = self.db_port(pkg);
+        let conf = self.my_ini(pkg, &instance);
+        mkdir(&self.paths.tmp().join(&instance))?;
+        let server = trouver_exe(&bin, &["mysqld"])?;
+        if !Moteur::Mysql.donnees_initialisees(&datadir) {
+            // `--initialize-insecure` ne crée que root@localhost ; avec skip-name-resolve, une
+            // connexion TCP vient de « 127.0.0.1 » : on crée aussi root@127.0.0.1 et root@::1.
+            let init = self.paths.tmp().join(&instance).join("init.sql");
+            write(
+                &init,
+                "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1' IDENTIFIED BY '';\n\
+                 GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;\n\
+                 CREATE USER IF NOT EXISTS 'root'@'::1' IDENTIFIED BY '';\n\
+                 GRANT ALL PRIVILEGES ON *.* TO 'root'@'::1' WITH GRANT OPTION;\n",
+            )?;
+            let args = vec![
+                "--no-defaults".to_string(),
+                "--initialize-insecure".into(),
+                format!("--basedir={}", pkg.path.display()),
+                format!("--datadir={}", datadir.display()),
+                format!("--init-file={}", init.display()),
+                "--console".into(),
+            ];
+            self.init_donnees(pkg, &server, &args, &datadir)?;
+        }
+        write(&conf, &templates::render(self.paths, templates::MYSQL_INI, self.my_ini_ctx(pkg, &instance, &datadir, port))?)?;
+
+        let mut s = ServiceSpec::new(&instance, &server, self.paths.logs().join(format!("{instance}.log")));
+        s.args = vec![format!("--defaults-file={}", slash(&conf))];
+        s.cwd = pkg.path.clone();
+        s.ports = vec![port];
+        // MySQL 8+ (Windows) passe par un processus « moniteur » : l'événement d'arrêt ne
+        // vise pas forcément le bon PID. `mysqladmin shutdown` arrête proprement le vrai serveur.
+        let admin = trouver_exe(&bin, &["mysqladmin"])?;
+        s.stop = StopStrategy::Command {
+            program: admin,
+            args: vec!["--no-defaults".into(), "--host=127.0.0.1".into(), format!("--port={port}"), "--user=root".into(), "shutdown".into()],
+        };
+        s.stop_timeout = Duration::from_secs(30);
+        s.start_timeout = Duration::from_secs(90);
+        Ok(s)
+    }
+
+    /// PostgreSQL : données initialisées par `initdb` (utilisateur `postgres`, accès local
+    /// sans mot de passe, UTF-8), serveur `postgres` limité à 127.0.0.1, arrêt `pg_ctl stop`.
+    pub fn postgresql_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
+        let bin = pkg.path.join("bin");
+        let datadir = self.db_datadir(pkg);
+        let instance = self.db_instance(pkg);
+        let port = self.db_port(pkg);
+        let server = trouver_exe(&bin, &["postgres"])?;
+        if !Moteur::Postgresql.donnees_initialisees(&datadir) {
+            let exe = trouver_exe(&bin, &["initdb"])?;
+            let args = vec![
+                "-D".to_string(),
+                datadir.display().to_string(),
+                "-U".into(),
+                "postgres".into(),
+                "-A".into(),
+                "trust".into(),
+                "-E".into(),
+                "UTF8".into(),
+                "--no-locale".into(),
+            ];
+            self.init_donnees(pkg, &exe, &args, &datadir)?;
+        }
+        let mut s = ServiceSpec::new(&instance, &server, self.paths.logs().join(format!("{instance}.log")));
+        s.args = vec![
+            "-D".into(),
+            datadir.display().to_string(),
+            "-p".into(),
+            port.to_string(),
+            // Accessible uniquement depuis cette machine.
+            "-c".into(),
+            "listen_addresses=127.0.0.1".into(),
+        ];
+        s.cwd = pkg.path.clone();
+        s.ports = vec![port];
+        // Prêt seulement quand PostgreSQL accepte les connexions (pas pendant sa récupération).
+        s.ready_check = Some((
+            trouver_exe(&bin, &["pg_isready"])?,
+            vec!["-h".into(), "127.0.0.1".into(), "-p".into(), port.to_string(), "-U".into(), "postgres".into()],
+        ));
+        let pg_ctl = trouver_exe(&bin, &["pg_ctl"])?;
+        s.stop = StopStrategy::Command {
+            program: pg_ctl,
+            args: vec!["stop".into(), "-D".into(), datadir.display().to_string(), "-m".into(), "fast".into(), "-w".into()],
+        };
+        s.stop_timeout = Duration::from_secs(30);
+        s.start_timeout = Duration::from_secs(60);
+        Ok(s)
+    }
+
+    /// Initialise un dossier de données ; en cas d'échec, le dossier à moitié créé est supprimé.
+    fn init_donnees(&self, pkg: &InstalledPackage, exe: &Path, args: &[String], datadir: &Path) -> Result<()> {
+        tracing::info!(datadir = %datadir.display(), moteur = %pkg.package, "initialisation du dossier de données");
         if let Some(parent) = datadir.parent() {
             mkdir(parent)?;
         }
-        let args = vec![format!("--datadir={}", datadir.display()), format!("--port={port}")];
-        if let Err(e) = check_config(MARIADB, &exe, &args, &pkg.path) {
+        if let Err(e) = check_config(&pkg.package, exe, args, &pkg.path) {
             // Un dossier à moitié créé bloquerait les essais suivants.
             let _ = std::fs::remove_dir_all(datadir);
             return Err(match e {
@@ -498,6 +663,14 @@ impl<'a> Stack<'a> {
         }
         Ok(())
     }
+}
+
+/// Premier exécutable existant parmi `noms` dans `bin`.
+fn trouver_exe(bin: &Path, noms: &[&str]) -> Result<PathBuf> {
+    noms.iter()
+        .map(|n| bin.join(platform::exe_name(n)))
+        .find(|p| p.is_file())
+        .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name(noms[0])) })
 }
 
 fn mkdir(p: &Path) -> Result<()> {
@@ -579,15 +752,60 @@ mod tests {
         settings.site_mariadb.insert("disparu".into(), "10.11".into());
         let st = Stack::new(&paths, &settings, &installed);
 
-        assert_eq!(st.site_mariadb("prod").unwrap().version, "11.4.14");
-        assert_eq!(st.site_mariadb("neuf").unwrap().version, "12.3.4");
+        assert_eq!(st.site_db("prod").unwrap().version, "11.4.14");
+        assert_eq!(st.site_db("neuf").unwrap().version, "12.3.4");
         let needed: Vec<_> = st.mariadb_needed().iter().map(|p| p.version.clone()).collect();
         assert_eq!(needed, ["12.3.4", "11.4.14"], "10.11 n'est utilisée par aucun site existant");
-        assert_eq!(st.mariadb_port(&installed[0]), 3306);
-        assert_eq!(st.mariadb_port(&installed[1]), 31104);
-        assert_eq!(st.mariadb_port(&installed[2]), 31011);
-        assert_eq!(st.mariadb_instance(&installed[0]), "mariadb");
-        assert_eq!(st.mariadb_instance(&installed[1]), "mariadb-11.4");
+        assert_eq!(st.db_port(&installed[0]), 3306);
+        assert_eq!(st.db_port(&installed[1]), 31104);
+        assert_eq!(st.db_port(&installed[2]), 31011);
+        assert_eq!(st.db_instance(&installed[0]), "mariadb");
+        assert_eq!(st.db_instance(&installed[1]), "mariadb-11.4");
+    }
+
+    #[test]
+    fn mysql_et_postgresql_par_site() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        for s in ["wp", "laravel", "api", "ancien"] {
+            std::fs::create_dir_all(paths.www().join(s)).unwrap();
+        }
+        let installed = vec![
+            pkg("mariadb", "12.3.4", t.path()),
+            pkg("mysql", "8.4.13", t.path()),
+            pkg("mysql", "8.0.46", t.path()),
+            pkg("postgresql", "17.12", t.path()),
+            pkg("postgresql", "16.16", t.path()),
+        ];
+        let mut settings = Settings::default();
+        settings.versions.mysql = Some("8.4".into());
+        settings.versions.postgresql = Some("17".into());
+        settings.site_db.insert("laravel".into(), "postgresql:17".into());
+        settings.site_db.insert("api".into(), "postgresql:16".into());
+        settings.site_db.insert("ancien".into(), "mysql:8.0".into());
+        let st = Stack::new(&paths, &settings, &installed);
+
+        assert_eq!(st.site_db("wp").unwrap().package, "mariadb", "sans choix : MariaDB par défaut");
+        assert_eq!(st.site_db("laravel").unwrap().version, "17.12");
+        assert_eq!(st.site_db("ancien").unwrap().version, "8.0.46");
+        let v = |m| st.db_needed(m).iter().map(|p| p.version.clone()).collect::<Vec<_>>();
+        assert_eq!(v(Moteur::Mysql), ["8.4.13", "8.0.46"]);
+        assert_eq!(v(Moteur::Postgresql), ["17.12", "16.16"]);
+        assert_eq!(v(Moteur::Mariadb), ["12.3.4"]);
+        assert_eq!((st.db_port(&installed[1]), st.db_instance(&installed[1])), (3307, "mysql".into()));
+        assert_eq!((st.db_port(&installed[2]), st.db_instance(&installed[2])), (40800, "mysql-8.0".into()));
+        assert_eq!((st.db_port(&installed[3]), st.db_instance(&installed[3])), (5432, "postgresql".into()));
+        assert_eq!((st.db_port(&installed[4]), st.db_instance(&installed[4])), (51600, "postgresql-16".into()));
+        assert_eq!(st.db_datadir(&installed[4]), paths.data().join("postgresql-16"));
+        assert!(st.db_client(&installed[3]).is_err(), "psql absent du faux paquet");
+        // PostgreSQL : la version qui a déjà des données est préférée.
+        let sans_choix = Settings::default();
+        let st = Stack::new(&paths, &sans_choix, &installed);
+        assert_eq!(st.default_db(Moteur::Postgresql).unwrap().version, "17.12");
+        std::fs::create_dir_all(paths.data().join("postgresql-16")).unwrap();
+        std::fs::write(paths.data().join("postgresql-16").join("PG_VERSION"), "16").unwrap();
+        assert_eq!(st.default_db(Moteur::Postgresql).unwrap().version, "16.16");
     }
 
     #[test]

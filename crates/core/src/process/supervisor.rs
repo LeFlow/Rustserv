@@ -59,6 +59,10 @@ pub struct ServiceSpec {
     pub log_file: PathBuf,
     /// Redémarrer automatiquement en cas d'arrêt inattendu.
     pub restart: bool,
+    /// Commande de disponibilité facultative, exécutée une fois les ports en écoute :
+    /// le service n'est « prêt » que lorsqu'elle réussit (ex. `pg_isready` : PostgreSQL ouvre
+    /// son port avant d'accepter les connexions, pendant sa récupération).
+    pub ready_check: Option<(PathBuf, Vec<String>)>,
 }
 
 impl ServiceSpec {
@@ -78,6 +82,7 @@ impl ServiceSpec {
             start_timeout: Duration::from_secs(15),
             log_file: log_file.into(),
             restart: true,
+            ready_check: None,
         }
     }
 }
@@ -262,7 +267,14 @@ impl Supervisor {
             }
             let prets = spec.ports.iter().all(|&p| ports::is_listening(p));
             if prets && (!spec.ports.is_empty() || debut.elapsed() >= Duration::from_millis(500)) {
-                return Ok(child);
+                let Some((prog, args)) = &spec.ready_check else { return Ok(child) };
+                let mut cmd = tokio::process::Command::new(prog);
+                cmd.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true);
+                cmd.creation_flags(platform::CREATE_NO_WINDOW);
+                if matches!(tokio::time::timeout(Duration::from_secs(5), cmd.status()).await, Ok(Ok(s)) if s.success()) {
+                    return Ok(child);
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
             if debut.elapsed() > spec.start_timeout {
                 let _ = child.kill().await;

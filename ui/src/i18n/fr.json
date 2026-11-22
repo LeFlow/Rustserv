@@ -43,7 +43,9 @@
     "groupe": {
       "web": "Serveur web ({logiciel})",
       "php": "PHP (FastCGI)",
-      "mariadb": "Base de données MariaDB"
+      "mariadb": "Base de données MariaDB",
+      "mysql": "Base de données MySQL",
+      "postgresql": "Base de données PostgreSQL"
     },
     "etat": {
       "arrete": "Arrêté",
@@ -58,7 +60,7 @@
     "appliquer_maintenant": "Redémarrer maintenant",
     "adminer": "Gérer les bases",
     "adminer_ouverture": "Ouverture…",
-    "adminer_aide": "Ouvre Adminer dans le navigateur, déjà connecté à MariaDB (installé et démarré automatiquement si besoin). Accessible depuis ce PC uniquement.",
+    "adminer_aide": "Ouvre Adminer dans le navigateur, déjà connecté à {moteur} (installé et démarré automatiquement si besoin). Accessible depuis ce PC uniquement.",
     "par_defaut": "par défaut"
   },
   "php": {
@@ -158,14 +160,16 @@
     "wp_fix_aide": "Fait pointer ce site WordPress vers son domaine actuel (base de données et wp-config.php). À utiliser après un import ou un changement de domaine.",
     "wp_fix_ok": "{site} : adresses converties de {de} vers {vers}.",
     "wp_fix_rien": "{site} utilise déjà {url} : rien à changer.",
-    "db_aide": "Version de MariaDB du site (par exemple celle de la production). Changer de version copie la base du site vers la nouvelle (l'ancienne est conservée) et met à jour wp-config.php / .env.",
+    "db_aide": "Base de données du site (par exemple celle de la production). Entre MariaDB et MySQL, la base est copiée (l'ancienne est conservée). Vers ou depuis PostgreSQL, une base vide du même nom est créée : les données ne peuvent pas être converties automatiquement. wp-config.php / .env sont mis à jour.",
     "db_en_cours": "Copie de la base…",
-    "db_deplacee": "{site} : base « {base} » copiée de MariaDB {de} vers {vers} (port {port}). L'ancienne copie est conservée.",
-    "db_sans_base": "{site} utilise maintenant MariaDB {vers} (aucune base détectée dans sa configuration).",
-    "db_inchange": "{site} : version de MariaDB inchangée.",
-    "db_defaut": "MariaDB par défaut ({version})",
+    "db_deplacee": "{site} : base « {base} » copiée de {de} vers {vers} (port {port}). L'ancienne copie est conservée.",
+    "db_sans_base": "{site} utilise maintenant {vers} (aucune base détectée dans sa configuration).",
+    "db_inchange": "{site} : base de données inchangée.",
+    "db_defaut": "{base} (par défaut)",
     "ouvrir_menu": "Ouvrir",
-    "ouvrir_dossier": "Ouvrir le dossier du site"
+    "ouvrir_dossier": "Ouvrir le dossier du site",
+    "col_base": "Base de données",
+    "db_vide": "{site} utilise maintenant {vers} (port {port}) : base « {base} » créée vide, l'ancienne est conservée. Importez vos données ou relancez les migrations (php artisan migrate)."
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
@@ -192,7 +196,7 @@
     "application": "Application…",
     "enregistre_simple": "Réglages enregistrés.",
     "redemarrage_requis": "Des services sont en marche : utilisez « Tout redémarrer » dans l'onglet Services pour appliquer les changements.",
-    "apropos": "Stack de développement web locale et portable : PHP multi-versions, MariaDB, Nginx et Apache."
+    "apropos": "Stack de développement web locale et portable : PHP multi-versions, MariaDB, MySQL, PostgreSQL, Nginx et Apache."
   },
   "catalogue": {
     "mis_a_jour": "Catalogue du {date}",
@@ -262,7 +266,7 @@
       "inconnu": "Service inconnu : {service}.",
       "executable": "Le programme « {chemin} » est introuvable. Réinstallez-le depuis le catalogue.",
       "aucune_version": "Aucune version de {id} n'est installée. Installez-en une depuis la page Catalogue.",
-      "base_init": "La création du dossier de données MariaDB a échoué :\n{detail}"
+      "base_init": "La création du dossier de données de la base a échoué :\n{detail}"
     },
     "php": {
       "invalide": "PHP {version} ne démarre pas correctement avec ce php.ini (la modification a été annulée) :\n{detail}"
@@ -310,6 +314,9 @@
     "migration": {
       "echec": "Import impossible : {detail}",
       "source_active": "{source} est encore en marche. Quittez-le complètement (icône près de l'horloge → Quitter) puis relancez l'import : ses données ne doivent pas être en cours d'utilisation."
+    },
+    "base": {
+      "wordpress_postgresql": "« {site} » est un site WordPress : WordPress ne fonctionne qu'avec MariaDB ou MySQL, pas avec PostgreSQL."
     }
   },
   "terminal": {
@@ -425,6 +432,7 @@
       "adresses": "Conversion des adresses",
       "termine": "Terminé",
       "erreur": "Erreur :"
-    }
+    },
+    "col_base_cible": "Base"
   }
 }

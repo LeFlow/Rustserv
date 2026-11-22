@@ -1,7 +1,8 @@
 <?php
 // ------------------------------------------------------------------
 // Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
-// Connexion automatique d'Adminer au MariaDB local (root sans mot de passe).
+// Connexion automatique d'Adminer aux bases locales : MariaDB / MySQL (root) et
+// PostgreSQL (postgres), sans mot de passe.
 // Sécurité : le serveur web n'autorise cette page que depuis ce PC (127.0.0.1).
 // ------------------------------------------------------------------
 
@@ -16,12 +17,13 @@ function adminer_object()
 
         function credentials()
         {
-            // Instance choisie dans l'URL (?server=127.0.0.1:31104), sinon celle par défaut.
-            $serveur = isset($_GET['server']) && $_GET['server'] !== '' ? $_GET['server'] : '127.0.0.1:{{ port }}';
-            return [$serveur, 'root', ''];
+            // Instance choisie dans l'URL (?server=… ou ?pgsql=…), sinon celle par défaut.
+            $serveur = defined('Adminer\SERVER') && \Adminer\SERVER !== '' ? \Adminer\SERVER : '127.0.0.1:{{ port }}';
+            $utilisateur = isset($_GET['pgsql']) ? 'postgres' : 'root';
+            return [$serveur, $utilisateur, ''];
         }
 
-        // Le MariaDB de développement n'a pas de mot de passe : connexion acceptée.
+        // Les bases de développement n'ont pas de mot de passe : connexion acceptée.
         function login($login, $password)
         {
             return true;
@@ -37,16 +39,17 @@ function adminer_object()
 }
 
 // Première visite (ou après déconnexion) : connexion automatique, à l'instance
-// demandée par ?port=31104 (MariaDB multi-versions) ou à celle par défaut.
+// demandée par ?port=31104 (&driver=pgsql pour PostgreSQL) ou à celle par défaut.
 if (!isset($_GET['username']) && empty($_POST)) {
     $port = isset($_GET['port']) ? (int) $_GET['port'] : {{ port }};
     if ($port < 1024 || $port > 65535) {
         $port = {{ port }};
     }
+    $pgsql = isset($_GET['driver']) && $_GET['driver'] === 'pgsql';
     $_POST['auth'] = [
-        'driver' => 'server',
+        'driver' => $pgsql ? 'pgsql' : 'server',
         'server' => '127.0.0.1:' . $port,
-        'username' => 'root',
+        'username' => $pgsql ? 'postgres' : 'root',
         'password' => '',
         'db' => '',
     ];

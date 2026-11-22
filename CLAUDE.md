@@ -198,6 +198,35 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   version du site + `MYSQL_TCP_PORT`. Import Laragon/WAMP : version MariaDB choisissable par site.
 - Test réel : `mariadb_multi_versions_par_site` (`target/pile-mariadb`, 12.3 → 11.4).
 
+## MySQL et PostgreSQL (moteurs de bases, `db.rs`)
+
+- `Moteur` (Mariadb / Mysql / Postgresql) : branche « 11.4 », « 8.4 », mais **majeure seule** pour
+  PostgreSQL (« 17 »). Données `data/<moteur>-<branche>`, instance par défaut = service `<moteur>`
+  + port des réglages (3306 / **3307** / 5432) ; autres : `<moteur>-<branche>`, port
+  MariaDB 3MMmm, MySQL 4MMmm (8.0 → 40800), PostgreSQL 5MM00 (16 → 51600).
+- Choix par site : `settings.site_db` = « mysql:8.4 » (`ChoixBase`) ; l'ancien `site_mariadb`
+  (site → « 11.4 ») est converti au chargement. Sans choix : MariaDB par défaut (sinon MySQL, PG).
+- Groupes `mysql` / `postgresql` (cartes Services affichées seulement si installés).
+- MySQL : `mysqld --initialize-insecure` + `--init-file` créant **root@127.0.0.1 et root@::1**
+  (sinon ERROR 1130 : skip-name-resolve + connexion TCP). Gabarit `mysql.ini.j2` (`mysqlx=OFF`,
+  `disable-log-bin`). Arrêt : `mysqladmin shutdown` (processus moniteur : l'événement nommé ne
+  vise pas le bon PID). Vérifié : « Shutdown complete ».
+- PostgreSQL : `initdb -U postgres -A trust -E UTF8 --no-locale`, `postgres -D … -p … -c
+  listen_addresses=127.0.0.1`, arrêt `pg_ctl stop -m fast -w`. **`ready_check` = `pg_isready`** :
+  PostgreSQL ouvre son port avant d'accepter les connexions (récupération après arrêt brutal).
+- Catalogue : `exclude` (motifs « *.pdb », « pgAdmin 4/ ») : MySQL 511 Mo au lieu de 1,2 Go,
+  PostgreSQL 150 Mo au lieu de 1 Go. Ni MySQL (MD5 seul) ni EDB ne publient de SHA256 :
+  empreintes **calculées** par nous. Pas encore de recherche automatique des nouvelles versions.
+- Changer la base d'un site (`site_set_base`) : MariaDB ↔ MySQL = copie (`deplacer_base`,
+  collations converties) ; vers/depuis PostgreSQL = base **vide** du même nom (`changer_de_moteur`),
+  `.env` : `DB_CONNECTION` (pgsql/mysql), `DB_USERNAME` postgres/root. WordPress + PostgreSQL refusé
+  (`base.wordpress_postgresql`). Passage à PG : `pgsql` + `pdo_pgsql` activées dans le PHP du site.
+- Adminer : `?port=…&driver=pgsql` (utilisateur postgres) ; pgsql activée dans le PHP par défaut.
+- Terminal : client du moteur du site, `PGHOST/PGPORT/PGUSER` pour PostgreSQL.
+- Import Laragon/WAMP : cible MariaDB **ou MySQL** (pas PostgreSQL).
+- Tests réels : `mysql_et_postgresql_reels`, `adminer_mysql_et_postgresql` (`target/pile-bases` ;
+  archives réutilisées depuis `target/telechargements-db` si présentes).
+
 ## Version portable et déplacement du dossier
 
 - Installation de l'utilisateur : **`C:\Rustserv\`** (copie de `portable/` sans tmp/logs + `rustserv.exe`

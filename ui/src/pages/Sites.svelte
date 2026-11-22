@@ -8,7 +8,7 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, type HostsStatus, type MariadbVersion, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
+  import { api, nomMoteur, type BaseVersion, type HostsStatus, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
   import { nouveauTerminal } from "../lib/terminaux.svelte";
   import Import from "./Import.svelte";
 
@@ -24,7 +24,9 @@
   let info = $state<string | null>(null);
   let occupe = $state<Record<string, boolean>>({});
   let importOuvert = $state(false);
-  let mariadbs = $state<MariadbVersion[]>([]);
+  let bases = $state<BaseVersion[]>([]);
+  /** Base par défaut des sites sans choix (MariaDB par défaut, sinon MySQL, sinon PostgreSQL). */
+  const baseDefaut = $derived((["mariadb", "mysql", "postgresql"] as const).map((m) => bases.find((b) => b.moteur === m && b.defaut)).find((b) => b));
   /** Site dont le menu « Ouvrir » est déplié (un seul à la fois). */
   let menuOuvert = $state<string | null>(null);
 
@@ -33,21 +35,21 @@
     openUrl(url);
   }
 
-  /** Change la MariaDB d'un site : sa base est copiée vers la nouvelle version. */
-  function choisirMariadb(s: SiteView, valeur: string) {
+  /** Change la base d'un site : copiée entre MariaDB et MySQL, base vide créée vers / depuis PostgreSQL. */
+  function choisirBase(s: SiteView, valeur: string) {
     executer("db-" + s.name, async () => {
-      const r = await api.siteSetMariadb(s.name, valeur === "" ? null : valeur);
+      const r = await api.siteSetBase(s.name, valeur === "" ? null : valeur);
       if (r.de === r.vers) return t("sites.db_inchange", { site: s.name });
-      return r.base
-        ? t("sites.db_deplacee", { site: s.name, base: r.base, de: r.de, vers: r.vers, port: r.port })
-        : t("sites.db_sans_base", { site: s.name, vers: r.vers });
+      if (r.copiee) return t("sites.db_deplacee", { site: s.name, base: r.base ?? "", de: r.de, vers: r.vers, port: r.port });
+      if (r.base) return t("sites.db_vide", { site: s.name, base: r.base, vers: r.vers, port: r.port });
+      return t("sites.db_sans_base", { site: s.name, vers: r.vers });
     });
   }
 
   async function charger() {
     try {
-      const [s, php, h, c, r, m] = await Promise.all([api.sitesList(), api.phpOverview(), api.hostsStatus(), api.sslStatus(), api.settingsGet(), api.mariadbVersions()]);
-      mariadbs = m;
+      const [s, php, h, c, r, m] = await Promise.all([api.sitesList(), api.phpOverview(), api.hostsStatus(), api.sslStatus(), api.settingsGet(), api.basesVersions()]);
+      bases = m;
       sites = s;
       branches = php.versions.filter((v) => v.active).map((v) => v.branch);
       defaut = php.versions.find((v) => v.default) ?? null;
@@ -146,7 +148,7 @@
 {:else}
   <table class="carte">
     <thead>
-      <tr><th>{t("sites.col_site")}</th><th>PHP</th><th>MariaDB</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
+      <tr><th>{t("sites.col_site")}</th><th>PHP</th><th>{t("sites.col_base")}</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
     </thead>
     <tbody>
       {#each sites as s (s.name)}
@@ -166,14 +168,17 @@
             {#if s.php_missing}<div class="avert petit">{t("sites.php_manquant", { branche: s.php_choice ?? "", version: s.php_version ?? "—" })}</div>{/if}
           </td>
           <td>
-            {#if mariadbs.length > 1}
-              <select disabled={occupe["db-" + s.name]} value={s.mariadb_choice ?? ""} title={t("sites.db_aide")} onchange={(e) => choisirMariadb(s, e.currentTarget.value)}>
-                <option value="">{t("sites.db_defaut", { version: mariadbs.find((x) => x.defaut)?.branch ?? "—" })}</option>
-                {#each mariadbs.filter((x) => !x.defaut) as m}<option value={m.branch}>MariaDB {m.branch}</option>{/each}
+            {#if bases.length > 1}
+              <select disabled={occupe["db-" + s.name]} value={s.db_choice ?? ""} title={t("sites.db_aide")} onchange={(e) => choisirBase(s, e.currentTarget.value)}>
+                <option value="">{t("sites.db_defaut", { base: baseDefaut ? `${nomMoteur(baseDefaut.moteur)} ${baseDefaut.branch}` : "—" })}</option>
+                {#each bases.filter((b) => b.choix !== baseDefaut?.choix) as b}
+                  <!-- WordPress ne fonctionne pas avec PostgreSQL. -->
+                  <option value={b.choix} disabled={s.wordpress && b.moteur === "postgresql"}>{nomMoteur(b.moteur)} {b.branch}</option>
+                {/each}
               </select>
               {#if occupe["db-" + s.name]}<div class="muted petit">{t("sites.db_en_cours")}</div>{/if}
             {:else}
-              <span class="muted petit">{s.mariadb_version ?? "—"}</span>
+              <span class="muted petit">{s.db_version ? `${nomMoteur(s.db_moteur)} ${s.db_version}` : "—"}</span>
             {/if}
           </td>
           <td class="liens">

@@ -81,6 +81,65 @@
         }
       ]
     },
+    "mysql": {
+      "name": "MySQL",
+      "category": "database",
+      "homepage": "https://dev.mysql.com/downloads/mysql/",
+      "releases": [
+        {
+          "version": "8.4.13",
+          "branch": "8.4",
+          "url": "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.13-winx64.zip",
+          "sha256": "e9cd98b1d23f122987b1afca26ad942efec5891481103d48ae3cde237fa3ea54",
+          "vcruntime_min": "14.30",
+          "exclude": ["*.pdb"]
+        },
+        {
+          "version": "9.6.0",
+          "branch": "9.6",
+          "url": "https://cdn.mysql.com/Downloads/MySQL-9.6/mysql-9.6.0-winx64.zip",
+          "sha256": "e799c423e1df0740cfe8295117231d7bd5c6f7b6aad22a31bdeff6b33f8de809",
+          "vcruntime_min": "14.30",
+          "exclude": ["*.pdb"]
+        },
+        {
+          "version": "8.0.46",
+          "branch": "8.0",
+          "url": "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-8.0.46-winx64.zip",
+          "sha256": "28e9eda019d88eff4478d811ea2110b83f02a3966be157fe91cc55def3ab0d4d",
+          "vcruntime_min": "14.30",
+          "exclude": ["*.pdb"]
+        }
+      ]
+    },
+    "postgresql": {
+      "name": "PostgreSQL",
+      "category": "database",
+      "homepage": "https://www.postgresql.org/",
+      "releases": [
+        {
+          "version": "18.7",
+          "branch": "18",
+          "url": "https://get.enterprisedb.com/postgresql/postgresql-18.7-1-windows-x64-binaries.zip",
+          "sha256": "ead0bbc27fb678fa24dcf86b738981323042abd073c744103bf7f3aed23f9a33",
+          "exclude": ["pgAdmin 4/", "StackBuilder/", "doc/"]
+        },
+        {
+          "version": "17.12",
+          "branch": "17",
+          "url": "https://get.enterprisedb.com/postgresql/postgresql-17.12-1-windows-x64-binaries.zip",
+          "sha256": "a2cd8a774389347b70be7748ac4a37ef43cb6ee539c5fc3e85ae264b15e4a04c",
+          "exclude": ["pgAdmin 4/", "StackBuilder/", "doc/"]
+        },
+        {
+          "version": "16.16",
+          "branch": "16",
+          "url": "https://get.enterprisedb.com/postgresql/postgresql-16.16-1-windows-x64-binaries.zip",
+          "sha256": "5c0d06f3d26a929ecb36dd931409f1e51a4181355794a259b90aae8bffc57a9f",
+          "exclude": ["pgAdmin 4/", "StackBuilder/", "doc/"]
+        }
+      ]
+    },
     "php": {
       "name": "PHP",
       "category": "php",

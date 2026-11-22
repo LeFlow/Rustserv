@@ -99,6 +99,10 @@ pub struct Release {
     /// ex. `composer.phar`. Un `.phar` reçoit un lanceur `<nom>.bat`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    /// Contenu de l'archive à ne pas installer : « *.pdb » (symboles de débogage MySQL,
+    /// ~700 Mo) ou « pgAdmin 4/ » (dossier de ce nom). Réduit fortement la place occupée.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

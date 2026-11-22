@@ -7,6 +7,7 @@
 //! Le code spécifique à Windows est isolé dans le module [`platform`].
 
 pub mod catalog;
+pub mod db;
 pub mod compat;
 pub mod error;
 pub mod extensions_ops;

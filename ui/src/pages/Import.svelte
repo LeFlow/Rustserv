@@ -8,7 +8,7 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, type Detection, type ProgressionImport, type ResultatImport } from "../lib/api";
+  import { api, type Detection, type ProgressionImport, type ResultatImport, nomMoteur, type BaseVersion } from "../lib/api";
 
   let { fermer, termine }: { fermer: () => void; termine: () => void } = $props();
 
@@ -23,17 +23,18 @@
   let detection = $state<Detection | null>(null);
   let lignes = $state<Ligne[]>([]);
   let branches = $state<string[]>([]);
-  let mariadbs = $state<{ branch: string; defaut: boolean }[]>([]);
+  /** Bases possibles pour un site importé : MariaDB ou MySQL (les bases d'origine sont MySQL). */
+  let mariadbs = $state<BaseVersion[]>([]);
   let erreur = $state<string | null>(null);
   let enCours = $state(false);
   let etapes = $state<Record<string, ProgressionImport>>({});
   let resultats = $state<ResultatImport[] | null>(null);
 
   onMount(() => {
-    Promise.all([api.migrationDetect(), api.phpOverview(), api.mariadbVersions()])
+    Promise.all([api.migrationDetect(), api.phpOverview(), api.basesVersions()])
       .then(([d, php, m]) => {
         detection = d;
-        mariadbs = m;
+        mariadbs = m.filter((b) => b.moteur !== "postgresql");
         branches = php.versions.filter((v) => v.active).map((v) => v.branch);
         lignes = d.sites.map((s) => {
           const src = d.sources.find((x) => x.kind === s.source);
@@ -103,7 +104,7 @@
 
     <table>
       <thead>
-        <tr><th></th><th>{t("import.col_origine")}</th><th>{t("import.col_base")}</th><th>{t("import.col_nom")}</th><th>PHP</th>{#if mariadbs.length > 1}<th>MariaDB</th>{/if}<th>{t("import.col_adresses")}</th></tr>
+        <tr><th></th><th>{t("import.col_origine")}</th><th>{t("import.col_base")}</th><th>{t("import.col_nom")}</th><th>PHP</th>{#if mariadbs.length > 1}<th>{t("import.col_base_cible")}</th>{/if}<th>{t("import.col_adresses")}</th></tr>
       </thead>
       <tbody>
         {#each detection.sites as s, i (s.source + s.dossier)}
@@ -133,7 +134,7 @@
               <td>
                 <select bind:value={lignes[i].mariadb} disabled={enCours}>
                   <option value="">{t("import.php_defaut")}</option>
-                  {#each mariadbs.filter((m) => !m.defaut) as m}<option value={m.branch}>{m.branch}</option>{/each}
+                  {#each mariadbs.filter((m) => !(m.moteur === "mariadb" && m.defaut)) as m}<option value={m.choix}>{nomMoteur(m.moteur)} {m.branch}</option>{/each}
                 </select>
               </td>
             {/if}

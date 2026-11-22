@@ -146,7 +146,7 @@ pub async fn install_files(
     let _ = std::fs::remove_dir_all(&work);
     emit(InstallPhase::Extraction, 0, None);
     let (a2, w2) = (archive.clone(), work.clone());
-    tokio::task::spawn_blocking(move || extract_zip(&a2, &w2, |_, _| {})).await.map_err(|e| Error::Interne(e.to_string()))??;
+    tokio::task::spawn_blocking(move || extract_zip(&a2, &w2, &[], |_, _| {})).await.map_err(|e| Error::Interne(e.to_string()))??;
     let res = copy_files(&work, php_dir, &build.extension, &file_name);
     let _ = std::fs::remove_dir_all(&work);
     let _ = std::fs::remove_file(&archive);

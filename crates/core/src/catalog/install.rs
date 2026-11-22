@@ -132,11 +132,11 @@ impl Installer {
             }
             work.clone()
         } else {
-            let (archive2, work2, subdir) = (archive.clone(), work.clone(), release.subdir.clone());
+            let (archive2, work2, subdir, exclure) = (archive.clone(), work.clone(), release.subdir.clone(), release.exclude.clone());
             let label = release.file_name();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(u64, u64)>();
             let tache = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
-                extract_zip(&archive2, &work2, |d, t| {
+                extract_zip(&archive2, &work2, &exclure, |d, t| {
                     let _ = tx.send((d, t));
                 })?;
                 content_root(&work2, subdir.as_deref(), &label)
@@ -271,6 +271,7 @@ mod tests {
             subdir: subdir.map(Into::into),
             vcruntime_min: None,
             file: None,
+            exclude: Vec::new(),
         }
     }
 

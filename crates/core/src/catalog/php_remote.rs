@@ -55,6 +55,7 @@ pub fn parse_releases(json: &str) -> Result<Vec<Release>> {
             subdir: None,
             vcruntime_min: vcruntime_for(&compiler).map(Into::into),
             file: None,
+            exclude: Vec::new(),
         });
     }
     Ok(out)

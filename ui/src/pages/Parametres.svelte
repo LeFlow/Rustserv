@@ -64,6 +64,8 @@
         <label>HTTP <input type="number" min="1" max="65535" bind:value={reglages.ports.http} /></label>
         <label>HTTPS <input type="number" min="1" max="65535" bind:value={reglages.ports.https} /></label>
         <label>MariaDB <input type="number" min="1" max="65535" bind:value={reglages.ports.mariadb} /></label>
+        <label>MySQL <input type="number" min="1" max="65535" bind:value={reglages.ports.mysql} /></label>
+        <label>PostgreSQL <input type="number" min="1" max="65535" bind:value={reglages.ports.postgresql} /></label>
       </div>
     </fieldset>
 

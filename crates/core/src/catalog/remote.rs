@@ -35,6 +35,7 @@ fn release(version: &str, url: String, sha256: String) -> Release {
         subdir: None,
         vcruntime_min: None,
         file: None,
+        exclude: Vec::new(),
     }
 }
 

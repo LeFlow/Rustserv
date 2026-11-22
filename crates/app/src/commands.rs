@@ -278,10 +278,13 @@ pub async fn settings_save(state: State<'_, AppState>, settings: Settings) -> Re
     Ok(SaveResult { domaine_change, redemarrage_requis: autres_changements && en_marche })
 }
 
-/// « Gérer les bases » : installe Adminer si besoin, démarre MariaDB et le serveur
-/// web s'ils sont arrêtés (ou recharge sa configuration), puis renvoie l'adresse d'Adminer.
+/// « Gérer les bases » : installe Adminer si besoin, démarre le moteur demandé (MariaDB par
+/// défaut, MySQL ou PostgreSQL) et le serveur web s'ils sont arrêtés (ou recharge sa
+/// configuration), puis renvoie l'adresse d'Adminer connectée à l'instance voulue.
 #[tauri::command]
-pub async fn adminer_open(state: State<'_, AppState>, port: Option<u16>) -> Result<String> {
+pub async fn adminer_open(state: State<'_, AppState>, port: Option<u16>, moteur: Option<rustserv_core::db::Moteur>) -> Result<String> {
+    use rustserv_core::db::Moteur;
+    let moteur = moteur.unwrap_or(Moteur::Mariadb);
     use rustserv_core::orchestrator::Group;
     let mut nouveau = false;
     if !state.installer.installed()?.iter().any(|p| p.package == "adminer") {
@@ -305,16 +308,28 @@ pub async fn adminer_open(state: State<'_, AppState>, port: Option<u16>) -> Resu
         // Le serveur web doit connaître la nouvelle adresse /adminer/.
         state.orchestrator.apply(&settings, &installed).await?;
     }
-    if !actifs.contains(&Group::Mariadb) {
-        state.orchestrator.start(Group::Mariadb, &settings, &installed).await?;
+    let groupe = Group::de_moteur(moteur);
+    if !actifs.contains(&groupe) {
+        state.orchestrator.start(groupe, &settings, &installed).await?;
+    }
+    if moteur == Moteur::Postgresql {
+        // Adminer tourne avec le PHP par défaut : il lui faut l'extension pgsql.
+        crate::ext_commands::activer_pgsql(&state, &settings, &installed, None).await;
     }
     if !actifs.contains(&Group::Web) {
         state.orchestrator.start(Group::Web, &settings, &installed).await?;
     }
     let http = settings.ports.http;
     let base = if http == 80 { "http://localhost/adminer/".to_string() } else { format!("http://localhost:{http}/adminer/") };
-    Ok(match port {
-        Some(p) if p != settings.ports.mariadb => format!("{base}?port={p}"),
+    let port_defaut = match moteur {
+        Moteur::Mariadb => settings.ports.mariadb,
+        Moteur::Mysql => settings.ports.mysql,
+        Moteur::Postgresql => settings.ports.postgresql,
+    };
+    let port = port.unwrap_or(port_defaut);
+    Ok(match moteur {
+        Moteur::Postgresql => format!("{base}?port={port}&driver=pgsql"),
+        _ if port != settings.ports.mariadb => format!("{base}?port={port}"),
         _ => base,
     })
 }

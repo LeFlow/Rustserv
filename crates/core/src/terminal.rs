@@ -1,7 +1,8 @@
 //! Terminaux intégrés (pseudo-console Windows ConPTY via `portable-pty`).
 //!
 //! Chaque terminal s'ouvre dans le dossier d'un site, avec un environnement prêt :
-//! - `PATH` commençant par le PHP **du site**, puis Composer, MariaDB (client `mariadb`) ;
+//! - `PATH` commençant par le PHP **du site**, puis Composer, le client de la base du site
+//!   (`mariadb`, `mysql` ou `psql`, avec `MYSQL_TCP_PORT` / `PGPORT`) ;
 //! - `PHPRC` pointant vers le php.ini de Rustserv pour cette version (mêmes
 //!   extensions en ligne de commande que dans le navigateur).
 
@@ -47,14 +48,20 @@ impl Stack<'_> {
             }
         }
         // Outils facultatifs : la version la plus récente installée.
-        // Client MariaDB de la version du site (ou par défaut).
-        let mariadb = match &site {
-            Some(s) => self.site_mariadb(&s.name).ok(),
-            None => self.default_mariadb().ok(),
+        // Client de la base du site (MariaDB, MySQL ou PostgreSQL), sinon de la base par défaut.
+        let base = match &site {
+            Some(s) => self.site_db(&s.name).ok(),
+            None => self.default_site_db().ok(),
         };
-        if let Some(m) = mariadb {
+        if let Some(m) = base {
             prefix.push(m.path.join("bin"));
-            vars.push(("MYSQL_TCP_PORT".into(), self.mariadb_port(m).to_string()));
+            let port = self.db_port(m).to_string();
+            if Stack::moteur_de(m).famille_mysql() {
+                vars.push(("MYSQL_TCP_PORT".into(), port));
+            } else {
+                // psql, pg_dump… se connectent directement à la bonne instance.
+                vars.extend([("PGHOST".into(), "127.0.0.1".into()), ("PGPORT".into(), port), ("PGUSER".into(), "postgres".into())]);
+            }
         }
         for (pkg, sous) in [("composer", ""), ("nodejs", "")] {
             if let Some(p) = self.installed.iter().filter(|p| p.package == pkg).max_by(|a, b| version::cmp(&a.version, &b.version)) {

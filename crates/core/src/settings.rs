@@ -3,6 +3,7 @@
 //! Tous les champs ont une valeur par défaut : un fichier absent, partiel ou
 //! venant d'une ancienne version reste lisible.
 
+use crate::db::ChoixBase;
 use crate::error::{Error, Result};
 use crate::paths::Paths;
 use serde::{Deserialize, Serialize};
@@ -22,11 +23,14 @@ pub struct Ports {
     pub http: u16,
     pub https: u16,
     pub mariadb: u16,
+    /// MySQL par défaut : 3307 (MariaDB garde le 3306 historique).
+    pub mysql: u16,
+    pub postgresql: u16,
 }
 
 impl Default for Ports {
     fn default() -> Self {
-        Self { http: 80, https: 443, mariadb: 3306 }
+        Self { http: 80, https: 443, mariadb: 3306, mysql: 3307, postgresql: 5432 }
     }
 }
 
@@ -37,6 +41,8 @@ pub struct Versions {
     pub nginx: Option<String>,
     pub apache: Option<String>,
     pub mariadb: Option<String>,
+    pub mysql: Option<String>,
+    pub postgresql: Option<String>,
     /// **Branche** de PHP par défaut des sites (ex. « 8.3 »). Une version complète
     /// (« 8.3.37 », anciens réglages) est acceptée et ramenée à sa branche.
     pub php: Option<String>,
@@ -58,7 +64,11 @@ pub struct Settings {
     pub site_php: BTreeMap<String, String>,
     /// Version épinglée par branche (« 8.3 » → « 8.3.36 »). Absent = la plus récente installée.
     pub php_pins: BTreeMap<String, String>,
-    /// Branche de MariaDB choisie par site (nom du site → « 11.4 »). Absent = MariaDB par défaut.
+    /// Base de données choisie par site (nom du site → « mariadb:11.4 », « mysql:8.4 »,
+    /// « postgresql:17 »). Absent = MariaDB par défaut. Voir [`ChoixBase`].
+    pub site_db: BTreeMap<String, String>,
+    /// Ancien format (site → branche de MariaDB) : converti en `site_db` au chargement.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub site_mariadb: BTreeMap<String, String>,
 }
 
@@ -73,6 +83,7 @@ impl Default for Settings {
             timezone: "Europe/Paris".into(),
             site_php: BTreeMap::new(),
             php_pins: BTreeMap::new(),
+            site_db: BTreeMap::new(),
             site_mariadb: BTreeMap::new(),
         }
     }
@@ -89,14 +100,40 @@ impl Settings {
         let mut s: Settings = serde_json::from_str(&txt)
             .map_err(|e| Error::JsonInvalide { fichier: f.display().to_string(), detail: e.to_string() })?;
         s.php_pool_size = s.php_pool_size.clamp(1, 10);
+        // Réglages d'avant MySQL/PostgreSQL : « site → 11.4 » devient « site → mariadb:11.4 ».
+        for (site, branche) in std::mem::take(&mut s.site_mariadb) {
+            s.site_db.entry(site).or_insert(format!("mariadb:{branche}"));
+        }
         Ok(s)
+    }
+
+    /// Base de données choisie pour un site (None = MariaDB par défaut).
+    pub fn choix_base(&self, site: &str) -> Option<ChoixBase> {
+        self.site_db
+            .get(site)
+            .and_then(|c| ChoixBase::parse(c))
+            .or_else(|| self.site_mariadb.get(site).and_then(|b| ChoixBase::parse(b)))
+    }
+
+    /// Change la base de données d'un site (None = revenir au défaut).
+    pub fn set_choix_base(&mut self, site: &str, choix: Option<&ChoixBase>) {
+        self.site_mariadb.remove(site);
+        match choix {
+            Some(c) => {
+                self.site_db.insert(site.to_string(), c.texte());
+            }
+            None => {
+                self.site_db.remove(site);
+            }
+        }
     }
 
     /// Vérifie la cohérence des réglages avant enregistrement.
     pub fn validate(&self) -> Result<()> {
         let invalide = |d: String| Err(Error::ReglagesInvalides { detail: d });
         let p = &self.ports;
-        for (nom, port) in [("HTTP", p.http), ("HTTPS", p.https), ("MariaDB", p.mariadb)] {
+        let tous = [("HTTP", p.http), ("HTTPS", p.https), ("MariaDB", p.mariadb), ("MySQL", p.mysql), ("PostgreSQL", p.postgresql)];
+        for (nom, port) in tous {
             if port == 0 {
                 return invalide(format!("le port {nom} ne peut pas être 0"));
             }
@@ -104,8 +141,10 @@ impl Settings {
                 return invalide(format!("le port {nom} ({port}) est dans la plage 9000-9999 réservée aux processus PHP"));
             }
         }
-        if p.http == p.https || p.http == p.mariadb || p.https == p.mariadb {
-            return invalide("les ports HTTP, HTTPS et MariaDB doivent être différents".into());
+        for (i, (a, pa)) in tous.iter().enumerate() {
+            if let Some((b, _)) = tous[i + 1..].iter().find(|(_, pb)| pb == pa) {
+                return invalide(format!("les ports {a} et {b} doivent être différents ({pa})"));
+            }
         }
         if !(1..=10).contains(&self.php_pool_size) {
             return invalide("le nombre de processus PHP doit être compris entre 1 et 10".into());
@@ -170,5 +209,24 @@ mod tests {
         assert!(s.validate().is_err(), ".dev est un vrai domaine");
         s.tld = "localhost".into();
         assert!(s.validate().is_ok());
+        let mut s = Settings::default();
+        s.ports.mysql = 3306;
+        assert!(s.validate().is_err(), "MySQL et MariaDB sur le même port");
+    }
+
+    #[test]
+    fn anciens_choix_mariadb_convertis() {
+        let t = tempfile::tempdir().unwrap();
+        let p = Paths::new(t.path());
+        p.ensure_layout().unwrap();
+        std::fs::write(p.settings_file(), r#"{ "site_mariadb": { "blog": "11.4" } }"#).unwrap();
+        let mut s = Settings::load(&p).unwrap();
+        assert_eq!(s.site_db.get("blog").map(String::as_str), Some("mariadb:11.4"));
+        assert!(s.site_mariadb.is_empty());
+        let c = crate::db::ChoixBase::parse("postgresql:17").unwrap();
+        s.set_choix_base("blog", Some(&c));
+        assert_eq!(s.choix_base("blog"), Some(c));
+        s.save(&p).unwrap();
+        assert!(!std::fs::read_to_string(p.settings_file()).unwrap().contains("site_mariadb"));
     }
 }

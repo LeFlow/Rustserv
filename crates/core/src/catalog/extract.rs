@@ -7,8 +7,22 @@ use crate::error::{Error, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Extrait `archive` dans `out`. `on_progress(fichiers_faits, total)`.
-pub fn extract_zip(archive: &Path, out: &Path, mut on_progress: impl FnMut(u64, u64)) -> Result<()> {
+/// L'entrée est-elle exclue ? Motifs : « *.pdb » (extension) ou « doc/ » (dossier de ce nom,
+/// à n'importe quel niveau).
+pub fn est_exclu(chemin: &str, exclure: &[String]) -> bool {
+    exclure.iter().any(|m| {
+        if let Some(ext) = m.strip_prefix('*') {
+            chemin.to_ascii_lowercase().ends_with(&ext.to_ascii_lowercase())
+        } else {
+            let dossier = m.trim_end_matches('/');
+            chemin.split('/').rev().skip(1).any(|c| c.eq_ignore_ascii_case(dossier))
+                || (chemin.ends_with('/') && chemin.trim_end_matches('/').rsplit('/').next().is_some_and(|c| c.eq_ignore_ascii_case(dossier)))
+        }
+    })
+}
+
+/// Extrait `archive` dans `out` (sauf les entrées `exclure`). `on_progress(fichiers_faits, total)`.
+pub fn extract_zip(archive: &Path, out: &Path, exclure: &[String], mut on_progress: impl FnMut(u64, u64)) -> Result<()> {
     let label = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let invalide = |d: String| Error::ArchiveInvalide { fichier: label.clone(), detail: d };
 
@@ -23,6 +37,9 @@ pub fn extract_zip(archive: &Path, out: &Path, mut on_progress: impl FnMut(u64, 
         let rel = entry
             .enclosed_name()
             .ok_or_else(|| invalide(format!("chemin dangereux refusé : {nom}")))?;
+        if est_exclu(&nom.replace('\\', "/"), exclure) {
+            continue;
+        }
         let cible = out.join(rel);
         if entry.is_dir() {
             fs::create_dir_all(&cible).map_err(|e| Error::fichier(&cible, e))?;
@@ -91,7 +108,7 @@ pub(crate) mod tests {
         let a = t.path().join("n.zip");
         make_zip(&a, &[("nginx-1.0/", ""), ("nginx-1.0/nginx.exe", "MZ"), ("nginx-1.0/conf/nginx.conf", "x")]);
         let out = t.path().join("out");
-        extract_zip(&a, &out, |_, _| {}).unwrap();
+        extract_zip(&a, &out, &[], |_, _| {}).unwrap();
         let root = content_root(&out, None, "n.zip").unwrap();
         assert!(root.join("nginx.exe").is_file());
         assert!(root.join("conf/nginx.conf").is_file());
@@ -103,7 +120,7 @@ pub(crate) mod tests {
         let a = t.path().join("php.zip");
         make_zip(&a, &[("php.exe", "MZ"), ("php-cgi.exe", "MZ"), ("ext/php_curl.dll", "MZ")]);
         let out = t.path().join("out");
-        extract_zip(&a, &out, |_, _| {}).unwrap();
+        extract_zip(&a, &out, &[], |_, _| {}).unwrap();
         assert_eq!(content_root(&out, None, "php.zip").unwrap(), out);
     }
 
@@ -113,7 +130,7 @@ pub(crate) mod tests {
         let a = t.path().join("httpd.zip");
         make_zip(&a, &[("ReadMe.txt", "x"), ("Apache24/bin/httpd.exe", "MZ")]);
         let out = t.path().join("out");
-        extract_zip(&a, &out, |_, _| {}).unwrap();
+        extract_zip(&a, &out, &[], |_, _| {}).unwrap();
         assert!(content_root(&out, Some("Apache24"), "httpd.zip").unwrap().join("bin/httpd.exe").is_file());
         assert_eq!(content_root(&out, Some("Absent"), "httpd.zip").unwrap_err().code(), "installation.archive");
     }
@@ -123,9 +140,26 @@ pub(crate) mod tests {
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("evil.zip");
         make_zip(&a, &[("../../evil.txt", "pwned")]);
-        let err = extract_zip(&a, &t.path().join("out"), |_, _| {}).unwrap_err();
+        let err = extract_zip(&a, &t.path().join("out"), &[], |_, _| {}).unwrap_err();
         assert_eq!(err.code(), "installation.archive");
         assert!(!t.path().join("evil.txt").exists());
+    }
+
+    #[test]
+    fn exclusions() {
+        let ex = vec!["*.pdb".to_string(), "pgAdmin 4/".into(), "doc/".into()];
+        assert!(est_exclu("mysql-8.4/bin/mysqld.pdb", &ex));
+        assert!(!est_exclu("mysql-8.4/bin/mysqld.exe", &ex));
+        assert!(est_exclu("pgsql/pgAdmin 4/python/x.py", &ex));
+        assert!(est_exclu("pgsql/doc/", &ex));
+        assert!(!est_exclu("pgsql/share/doc.txt", &ex), "fichier nommé doc.txt conservé");
+        let t = tempfile::tempdir().unwrap();
+        let a = t.path().join("a.zip");
+        make_zip(&a, &[("pgsql/bin/psql.exe", "x"), ("pgsql/doc/index.html", "y"), ("pgsql/bin/psql.pdb", "z")]);
+        let out = t.path().join("out");
+        extract_zip(&a, &out, &ex, |_, _| {}).unwrap();
+        assert!(out.join("pgsql/bin/psql.exe").is_file());
+        assert!(!out.join("pgsql/doc").exists() && !out.join("pgsql/bin/psql.pdb").exists());
     }
 
     #[test]
@@ -133,6 +167,6 @@ pub(crate) mod tests {
         let t = tempfile::tempdir().unwrap();
         let a = t.path().join("faux.zip");
         fs::write(&a, "ceci n'est pas un zip").unwrap();
-        assert_eq!(extract_zip(&a, &t.path().join("o"), |_, _| {}).unwrap_err().code(), "installation.archive");
+        assert_eq!(extract_zip(&a, &t.path().join("o"), &[], |_, _| {}).unwrap_err().code(), "installation.archive");
     }
 }

@@ -103,9 +103,13 @@ pub enum Error {
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
 
-    /// Échec de la création du dossier de données MariaDB.
+    /// Échec de la création du dossier de données d'une base (MariaDB, MySQL, PostgreSQL).
     #[error("initialisation de la base échouée : {detail}")]
     BaseInit { detail: String },
+
+    /// WordPress ne fonctionne qu'avec MariaDB / MySQL.
+    #[error("WordPress ne fonctionne pas avec PostgreSQL ({site})")]
+    WordpressPostgresql { site: String },
 
     /// Erreur dans un gabarit de configuration.
     #[error("gabarit {nom} invalide : {detail}")]
@@ -192,6 +196,7 @@ impl Error {
             Error::ConfigInvalide { .. } => "config.invalide",
             Error::Gabarit { .. } => "config.gabarit",
             Error::BaseInit { .. } => "service.base_init",
+            Error::WordpressPostgresql { .. } => "base.wordpress_postgresql",
             Error::ReglagesInvalides { .. } => "reglages.invalides",
             Error::PhpInvalide { .. } => "php.invalide",
             Error::ExtensionInconnue { .. } => "extension.inconnue",
@@ -253,6 +258,7 @@ impl Error {
             Error::ConfigInvalide { service, detail } => json!({ "service": service, "detail": detail }),
             Error::Gabarit { nom, detail } => json!({ "nom": nom, "detail": detail }),
             Error::BaseInit { detail } | Error::ReglagesInvalides { detail } => json!({ "detail": detail }),
+            Error::WordpressPostgresql { site } => json!({ "site": site }),
             Error::PhpInvalide { version, detail } => json!({ "version": version, "detail": detail }),
             Error::ExtensionInconnue { extension, version } => json!({ "extension": extension, "version": version }),
             Error::ExtensionIntegree { extension } => json!({ "extension": extension }),
@@ -342,6 +348,7 @@ mod tests {
             Error::ConfigInvalide { service: s(), detail: s() },
             Error::Gabarit { nom: s(), detail: s() },
             Error::BaseInit { detail: s() },
+            Error::WordpressPostgresql { site: s() },
             Error::ReglagesInvalides { detail: s() },
             Error::PhpInvalide { version: s(), detail: s() },
             Error::ExtensionInconnue { extension: s(), version: s() },

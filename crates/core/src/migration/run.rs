@@ -8,6 +8,7 @@
 
 use super::detect::{wp_define, DbServer, Source, SourceKind, TypeSite};
 use crate::catalog::{version, Catalog, InstalledPackage, Installer};
+use crate::db::{ChoixBase, Moteur};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
 use crate::platform;
@@ -31,7 +32,7 @@ pub struct ImportItem {
     pub php: Option<String>,
     /// WordPress : convertir les adresses vers <nom>.<tld>.
     pub convertir_url: bool,
-    /// Branche de MariaDB du site (« 11.4 ») ; None = MariaDB par défaut.
+    /// Base du site : « mariadb:11.4 », « mysql:8.4 » (ou « 11.4 » = MariaDB) ; None = MariaDB par défaut.
     #[serde(default)]
     pub mariadb: Option<String>,
 }
@@ -396,19 +397,22 @@ pub async fn importer(
     let travail = paths.tmp().join("migration");
     std::fs::create_dir_all(&travail).map_err(|e| Error::fichier(&travail, e))?;
     let installed = installer.installed()?;
-    // Choix de MariaDB de chaque site pris en compte dès maintenant (port de l'instance).
+    // Base de chaque site (MariaDB ou MySQL) prise en compte dès maintenant (port de l'instance).
     let mut avec_choix = settings.clone();
     for i in items {
-        if let Some(b) = &i.mariadb {
-            avec_choix.site_mariadb.insert(i.nom.clone(), b.clone());
+        if let Some(c) = i.mariadb.as_deref().and_then(ChoixBase::parse) {
+            avec_choix.set_choix_base(&i.nom, Some(&c));
         }
     }
     let stack = Stack::new(paths, &avec_choix, &installed);
     let mut cibles: std::collections::HashMap<String, (Cible, Vec<String>)> = std::collections::HashMap::new();
     for i in items {
-        let pkg = stack.site_mariadb(&i.nom)?;
+        let pkg = stack.site_db(&i.nom)?;
+        if !Stack::moteur_de(pkg).famille_mysql() {
+            return Err(echec(format!("« {} » : l'import vers PostgreSQL n'est pas possible (bases MySQL d'origine)", i.nom)));
+        }
         if !cibles.contains_key(&pkg.version) {
-            let c = Cible { client: stack.mariadb_client(pkg)?, port: stack.mariadb_port(pkg) };
+            let c = Cible { client: stack.db_client(pkg)?, port: stack.db_port(pkg) };
             let prises = c.bases().await?;
             cibles.insert(pkg.version.clone(), (c, prises));
         }
@@ -453,7 +457,7 @@ pub async fn importer(
     let mut nouveaux = settings.clone();
     let mut resultats = Vec::new();
     for item in items {
-        let version_db = stack.site_mariadb(&item.nom)?.version.clone();
+        let version_db = stack.site_db(&item.nom)?.version.clone();
         let (cible, prises) = cibles.get_mut(&version_db).expect("cible MariaDB préparée");
         let r = importer_site(paths, &nouveaux, installer, catalog, cible, prises, item, &exports, &erreurs_export, https, on).await;
         match r {
@@ -463,8 +467,8 @@ pub async fn importer(
                         nouveaux.site_php.insert(item.nom.clone(), b.clone());
                     }
                 }
-                if let Some(b) = &item.mariadb {
-                    nouveaux.site_mariadb.insert(item.nom.clone(), b.clone());
+                if let Some(c) = item.mariadb.as_deref().and_then(ChoixBase::parse) {
+                    nouveaux.set_choix_base(&item.nom, Some(&c));
                 }
                 on(Progression { site: item.nom.clone(), etape: Etape::Termine, detail: String::new() });
                 res.ok = true;
@@ -651,8 +655,8 @@ pub async fn adapter_site(
     }
     let installed = installer.installed()?;
     let stack = Stack::new(paths, settings, &installed);
-    let mariadb = stack.site_mariadb(site)?;
-    let cible = Cible { client: stack.mariadb_client(mariadb)?, port: stack.mariadb_port(mariadb) };
+    let mariadb = stack.site_db(site)?;
+    let cible = Cible { client: stack.db_client(mariadb)?, port: stack.db_port(mariadb) };
     let nouvelle = format!("{}://{site}.{}", if https { "https" } else { "http" }, settings.tld);
     let php = stack.site_php(site).map(|p| version::branch(&p.version));
     let ancienne = adapter_adresses(paths, settings, installer, catalog, &cible, &dest, php.as_deref(), &nouvelle).await?;
@@ -669,22 +673,94 @@ pub fn base_du_site(dossier: &Path) -> Option<String> {
 
 /// Fait pointer la configuration d'un site (wp-config.php / .env) vers le port donné.
 pub fn configurer_port(dossier: &Path, port: u16) -> Result<()> {
+    configurer_base(dossier, Moteur::Mariadb, port)
+}
+
+/// Fait pointer la configuration d'un site vers une instance (moteur + port).
+/// `.env` (Laravel…) : `DB_CONNECTION` suit le moteur (`pgsql` / `mysql`, `mariadb` conservé),
+/// et l'utilisateur devient `postgres` ou `root` (sans mot de passe) quand on change de famille.
+pub fn configurer_base(dossier: &Path, moteur: Moteur, port: u16) -> Result<()> {
+    let env = dossier.join(".env");
+    if let Ok(t) = std::fs::read_to_string(&env) {
+        let actuelle = super::detect::env_value(&t, "DB_CONNECTION");
+        if super::detect::env_value(&t, "DB_DATABASE").is_some() || actuelle.is_some() {
+            let etait_pg = actuelle.as_deref() == Some("pgsql");
+            let connexion = match moteur {
+                Moteur::Postgresql => "pgsql",
+                Moteur::Mariadb if actuelle.as_deref() == Some("mariadb") => "mariadb",
+                _ => "mysql",
+            };
+            let mut t = set_env(&set_env(&set_env(&t, "DB_CONNECTION", connexion), "DB_HOST", "127.0.0.1"), "DB_PORT", &port.to_string());
+            if etait_pg != (moteur == Moteur::Postgresql) {
+                t = set_env(&set_env(&t, "DB_USERNAME", if moteur == Moteur::Postgresql { "postgres" } else { "root" }), "DB_PASSWORD", "");
+            }
+            std::fs::write(&env, t).map_err(|e| Error::fichier(&env, e))?;
+        }
+    }
+    if !moteur.famille_mysql() {
+        return Ok(());
+    }
     let wpc = dossier.join("wp-config.php");
     if let Ok(t) = std::fs::read_to_string(&wpc) {
         let hote = if port == 3306 { "127.0.0.1".to_string() } else { format!("127.0.0.1:{port}") };
         std::fs::write(&wpc, set_wp_define(&t, "DB_HOST", &hote)).map_err(|e| Error::fichier(&wpc, e))?;
     }
-    let env = dossier.join(".env");
-    if let Ok(t) = std::fs::read_to_string(&env) {
-        if super::detect::env_value(&t, "DB_DATABASE").is_some() {
-            let t = set_env(&set_env(&t, "DB_HOST", "127.0.0.1"), "DB_PORT", &port.to_string());
-            std::fs::write(&env, t).map_err(|e| Error::fichier(&env, e))?;
-        }
+    Ok(())
+}
+
+/// Crée une base vide (si elle n'existe pas) dans une instance qui tourne.
+pub async fn creer_base(client: &Path, moteur: Moteur, port: u16, base: &str) -> Result<()> {
+    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(echec(format!("nom de base refusé : « {base} »")));
+    }
+    if moteur.famille_mysql() {
+        return Cible { client: client.to_path_buf(), port }.sql(&format!("CREATE DATABASE IF NOT EXISTS `{base}` CHARACTER SET utf8mb4")).await.map(|_| ());
+    }
+    let psql = |requete: String| {
+        vec![
+            "-h".to_string(),
+            "127.0.0.1".into(),
+            "-p".into(),
+            port.to_string(),
+            "-U".into(),
+            "postgres".into(),
+            "-d".into(),
+            "postgres".into(),
+            "-tAc".into(),
+            requete,
+        ]
+    };
+    let (ok, existe, err) = executer(client, &psql(format!("SELECT 1 FROM pg_database WHERE datname = '{base}'")), None, 60).await?;
+    if !ok {
+        return Err(echec(err.trim().to_string()));
+    }
+    if existe.trim() == "1" {
+        return Ok(());
+    }
+    let (ok, _, err) = executer(client, &psql(format!("CREATE DATABASE \"{base}\" ENCODING 'UTF8'")), None, 60).await?;
+    if !ok {
+        return Err(echec(format!("création de la base « {base} » : {}", err.trim())));
     }
     Ok(())
 }
 
-/// Copie la base d'un site d'une instance MariaDB vers une autre (les deux doivent tourner),
+/// Change le moteur d'un site entre familles (MariaDB/MySQL ↔ PostgreSQL) : les données ne
+/// peuvent pas être converties automatiquement ; une base **vide** du même nom est créée
+/// dans la cible (l'ancienne est conservée) et la configuration du site est adaptée.
+pub async fn changer_de_moteur(dossier: &Path, site: &str, client_cible: &Path, cible: &InstalledPackage, port: u16) -> Result<Option<String>> {
+    let moteur = Stack::moteur_de(cible);
+    if moteur == Moteur::Postgresql && dossier.join("wp-config.php").is_file() {
+        return Err(Error::WordpressPostgresql { site: site.into() });
+    }
+    let base = base_du_site(dossier);
+    if let Some(b) = &base {
+        creer_base(client_cible, moteur, port, b).await?;
+    }
+    configurer_base(dossier, moteur, port)?;
+    Ok(base)
+}
+
+/// Copie la base d'un site d'une instance MariaDB / MySQL vers une autre (les deux doivent tourner),
 /// puis met à jour la configuration du site. L'ancienne base est **conservée**.
 /// Renvoie le nom de la base copiée (None si le site n'a pas de base).
 pub async fn deplacer_base(
@@ -695,19 +771,28 @@ pub async fn deplacer_base(
     cible_pkg: &InstalledPackage,
     port_cible: u16,
 ) -> Result<Option<String>> {
+    let moteur_cible = Stack::moteur_de(cible_pkg);
     let Some(base) = base_du_site(dossier) else {
-        configurer_port(dossier, port_cible)?;
+        configurer_base(dossier, moteur_cible, port_cible)?;
         return Ok(None);
     };
-    let client_cible = ["mariadb.exe", "mysql.exe"].iter().map(|n| cible_pkg.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB introuvable"))?;
+    let client_cible = ["mariadb.exe", "mysql.exe"].iter().map(|n| cible_pkg.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB / MySQL introuvable"))?;
     let cible = Cible { client: client_cible, port: port_cible };
     if cible.bases().await?.contains(&base) {
         return Err(echec(format!(
-            "la base « {base} » existe déjà dans MariaDB {} : supprimez-la (Adminer) ou renommez-la avant de déplacer le site",
+            "la base « {base} » existe déjà dans {} {} : supprimez-la (Adminer) ou renommez-la avant de déplacer le site",
+            moteur_cible.nom(),
             cible_pkg.version
         )));
     }
-    let serveur = DbServer { label: format!("MariaDB {}", source.version), bin: source.path.join("bin"), data: PathBuf::new(), mariadb: true, bases: vec![] };
+    let moteur_source = Stack::moteur_de(source);
+    let serveur = DbServer {
+        label: format!("{} {}", moteur_source.nom(), source.version),
+        bin: source.path.join("bin"),
+        data: PathBuf::new(),
+        mariadb: moteur_source == Moteur::Mariadb,
+        bases: vec![],
+    };
     let travail = paths.tmp().join("migration");
     std::fs::create_dir_all(&travail).map_err(|e| Error::fichier(&travail, e))?;
     let fichier = travail.join(format!("deplacement-{base}.sql"));
@@ -715,7 +800,7 @@ pub async fn deplacer_base(
     let res = cible.importer(&base, &fichier).await;
     let _ = std::fs::remove_file(&fichier);
     res?;
-    configurer_port(dossier, port_cible)?;
+    configurer_base(dossier, moteur_cible, port_cible)?;
     tracing::info!(base, de = %source.version, vers = %cible_pkg.version, "base déplacée");
     Ok(Some(base))
 }
@@ -774,6 +859,19 @@ mod tests {
         assert_eq!(t, "define( 'DB_NAME', 'nouvelle' );\ndefine(\"DB_HOST\", \"127.0.0.1:3307\");\ndefine('DB_PASSWORD','');");
         assert_eq!(table_prefix("$table_prefix  = 'wpx_';"), "wpx_");
         assert_eq!(table_prefix("rien"), "wp_");
+    }
+
+    #[test]
+    fn env_selon_le_moteur() {
+        let t = tempfile::tempdir().unwrap();
+        let env = t.path().join(".env");
+        std::fs::write(&env, "DB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=3306\nDB_DATABASE=app\nDB_USERNAME=root\nDB_PASSWORD=\n").unwrap();
+        configurer_base(t.path(), Moteur::Postgresql, 5432).unwrap();
+        let e = std::fs::read_to_string(&env).unwrap();
+        assert!(e.contains("DB_CONNECTION=pgsql") && e.contains("DB_PORT=5432") && e.contains("DB_USERNAME=postgres"), "{e}");
+        configurer_base(t.path(), Moteur::Mysql, 3307).unwrap();
+        let e = std::fs::read_to_string(&env).unwrap();
+        assert!(e.contains("DB_CONNECTION=mysql") && e.contains("DB_PORT=3307") && e.contains("DB_USERNAME=root"), "{e}");
     }
 
     #[test]

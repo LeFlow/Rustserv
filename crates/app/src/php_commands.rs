@@ -189,9 +189,10 @@ pub struct SiteView {
     local_url: String,
     /// Site WordPress (wp-config.php présent).
     wordpress: bool,
-    /// Branche de MariaDB choisie (null = par défaut) et version réellement utilisée.
-    mariadb_choice: Option<String>,
-    mariadb_version: Option<String>,
+    /// Base choisie (« mysql:8.4 », null = par défaut), moteur et version réellement utilisés.
+    db_choice: Option<String>,
+    db_moteur: Option<rustserv_core::db::Moteur>,
+    db_version: Option<String>,
 }
 
 #[tauri::command]
@@ -214,8 +215,9 @@ pub fn sites_list(state: State<'_, AppState>) -> Result<Vec<SiteView>> {
                 dir: s.dir.display().to_string(),
                 root: s.root.display().to_string(),
                 wordpress: s.dir.join("wp-config.php").is_file(),
-                mariadb_choice: settings.site_mariadb.get(&s.name).cloned(),
-                mariadb_version: st.site_mariadb(&s.name).ok().map(|p| p.version.clone()),
+                db_choice: settings.choix_base(&s.name).map(|c| c.texte()),
+                db_moteur: st.site_db(&s.name).ok().map(Stack::moteur_de),
+                db_version: st.site_db(&s.name).ok().map(|p| p.version.clone()),
                 php_choice: choice,
                 php_missing: missing,
                 name: s.name,

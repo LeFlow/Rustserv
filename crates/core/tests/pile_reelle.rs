@@ -780,8 +780,8 @@ define( 'DB_HOST', '127.0.0.1' );
 
     // Données dans la MariaDB par défaut.
     let st = Stack::new(&paths, &settings, &installed);
-    let src = st.site_mariadb("prod-copie").unwrap().clone();
-    let client = st.mariadb_client(&src).unwrap();
+    let src = st.site_db("prod-copie").unwrap().clone();
+    let client = st.db_client(&src).unwrap();
     let sql = |client: &std::path::Path, port: u16, q: &str| {
         let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "-N", "-B", "-e", q]).output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -793,14 +793,14 @@ define( 'DB_HOST', '127.0.0.1' );
     let mut nouveau = settings.clone();
     nouveau.site_mariadb.insert("prod-copie".into(), "11.4".into());
     let n = Stack::new(&paths, &nouveau, &installed);
-    let dst = n.site_mariadb("prod-copie").unwrap().clone();
+    let dst = n.site_db("prod-copie").unwrap().clone();
     assert!(dst.version.starts_with("11.4."));
     let port_dst = orch.ensure_mariadb(&nouveau, &installed, &dst).await.unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(port_dst, 31104);
-    let _ = sql(&n.mariadb_client(&dst).unwrap(), port_dst, "DROP DATABASE IF EXISTS prodcopie");
+    let _ = sql(&n.db_client(&dst).unwrap(), port_dst, "DROP DATABASE IF EXISTS prodcopie");
     let base = deplacer_base(&paths, &site, &src, settings.ports.mariadb, &dst, port_dst).await.unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(base.as_deref(), Some("prodcopie"));
-    let v = sql(&n.mariadb_client(&dst).unwrap(), port_dst, "SELECT CONCAT(VERSION(), ' | ', nom) FROM prodcopie.t");
+    let v = sql(&n.db_client(&dst).unwrap(), port_dst, "SELECT CONCAT(VERSION(), ' | ', nom) FROM prodcopie.t");
     println!("dans la 11.4 : {v}");
     assert!(v.starts_with("11.4.") && v.ends_with("élément"), "{v}");
     let wpc = std::fs::read_to_string(site.join("wp-config.php")).unwrap();
@@ -996,4 +996,188 @@ async fn nginx_puis_apache_servent_php() {
     }
     sup.stop_all().await;
     assert!(!ports::is_listening(9830));
+}
+
+/// MySQL et PostgreSQL réels : installation (sans .pdb ni pgAdmin), initialisation, déplacement
+/// d'une base MariaDB → MySQL, passage d'un site Laravel à PostgreSQL, connexion PHP, arrêt propre.
+#[tokio::test]
+#[ignore]
+async fn mysql_et_postgresql_reels() {
+    use rustserv_core::db::{ChoixBase, Moteur};
+    use rustserv_core::migration::run::{changer_de_moteur, deplacer_base};
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    use rustserv_core::process::ServiceState;
+    let paths = Paths::new(racine().with_file_name("pile-bases"));
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    // Archives déjà téléchargées (calcul des empreintes) : réutilisées si leur SHA256 correspond.
+    let cache = racine().with_file_name("telechargements-db");
+    let dl = paths.tmp().join("downloads");
+    std::fs::create_dir_all(&dl).unwrap();
+    for (id, b) in [("mysql", "8.4"), ("postgresql", "17")] {
+        let nom = cat.latest(id, Some(b)).unwrap().file_name();
+        if cache.join(&nom).is_file() && !dl.join(&nom).is_file() {
+            std::fs::copy(cache.join(&nom), dl.join(&nom)).unwrap();
+        }
+    }
+    let inst = Installer::new(paths.clone()).unwrap();
+    installe(&inst, &cat, "mariadb", Some("12.3")).await;
+    installe(&inst, &cat, "mysql", Some("8.4")).await;
+    installe(&inst, &cat, "postgresql", Some("17")).await;
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    let installed = inst.installed().unwrap();
+    fn taille(p: &std::path::Path) -> u64 {
+        std::fs::read_dir(p)
+            .map(|rd| rd.flatten().map(|e| if e.path().is_dir() { taille(&e.path()) } else { e.metadata().map(|m| m.len()).unwrap_or(0) }).sum())
+            .unwrap_or(0)
+    }
+    let pkg = |id: &str| installed.iter().find(|p| p.package == id).unwrap().clone();
+    let (my, pg) = (pkg("mysql"), pkg("postgresql"));
+    println!("installés : MySQL {} ({} Mo), PostgreSQL {} ({} Mo)", my.version, taille(&my.path) >> 20, pg.version, taille(&pg.path) >> 20);
+    assert!(!pg.path.join("pgAdmin 4").exists() && !pg.path.join("doc").exists(), "pgAdmin exclu");
+    assert!(!my.path.join("bin").join("mysqld.pdb").exists(), "symboles de débogage exclus");
+
+    let mut settings = Settings::default();
+    settings.ports.mariadb = libre();
+    settings.ports.mysql = libre();
+    settings.ports.postgresql = libre();
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    for g in [Group::Mariadb, Group::Mysql, Group::Postgresql] {
+        let t0 = std::time::Instant::now();
+        orch.start(g, &settings, &installed).await.unwrap_or_else(|e| panic!("{g:?} : {e}"));
+        println!("{g:?} démarré en {:.1}s", t0.elapsed().as_secs_f32());
+    }
+    let st = Stack::new(&paths, &settings, &installed);
+    let sql = |client: &std::path::Path, port: u16, q: &str| {
+        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "-N", "-B", "-e", q]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let psql = |q: &str| {
+        let o = std::process::Command::new(st.db_client(&pg).unwrap())
+            .args(["-h", "127.0.0.1", "-p", &settings.ports.postgresql.to_string(), "-U", "postgres", "-d", "postgres", "-tAc", q])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    println!("MySQL : {}", sql(&st.db_client(&my).unwrap(), settings.ports.mysql, "SELECT VERSION()"));
+    println!("PostgreSQL : {}", psql("SELECT version()"));
+
+    // Site Laravel : données dans MariaDB (collation propre à MariaDB 11+), puis passage à MySQL 8.4.
+    let site = paths.www().join("appli");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join(".env"), "APP_NAME=Appli\nDB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=3306\nDB_DATABASE=appli\nDB_USERNAME=root\nDB_PASSWORD=\n").unwrap();
+    let ma = pkg("mariadb");
+    sql(&st.db_client(&ma).unwrap(), settings.ports.mariadb, "DROP DATABASE IF EXISTS appli; CREATE DATABASE appli; CREATE TABLE appli.t (id INT PRIMARY KEY, nom VARCHAR(20)) COLLATE utf8mb4_uca1400_ai_ci; INSERT INTO appli.t VALUES (1,'élément');");
+    let _ = sql(&st.db_client(&my).unwrap(), settings.ports.mysql, "DROP DATABASE IF EXISTS appli");
+    let base = deplacer_base(&paths, &site, &ma, settings.ports.mariadb, &my, settings.ports.mysql).await.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(base.as_deref(), Some("appli"));
+    let v = sql(&st.db_client(&my).unwrap(), settings.ports.mysql, "SELECT CONCAT(VERSION(), ' | ', nom) FROM appli.t");
+    println!("MariaDB → MySQL : {v}");
+    assert!(v.starts_with("8.4.") && v.ends_with("élément"), "{v}");
+
+    // Passage à PostgreSQL : base vide créée, .env adapté.
+    let _ = psql("DROP DATABASE IF EXISTS appli");
+    let b = changer_de_moteur(&site, "appli", &st.db_client(&pg).unwrap(), &pg, settings.ports.postgresql).await.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(b.as_deref(), Some("appli"));
+    assert_eq!(psql("SELECT datname FROM pg_database WHERE datname = 'appli'"), "appli");
+    let env = std::fs::read_to_string(site.join(".env")).unwrap();
+    assert!(env.contains("DB_CONNECTION=pgsql") && env.contains(&format!("DB_PORT={}", settings.ports.postgresql)) && env.contains("DB_USERNAME=postgres"), "{env}");
+    // WordPress est refusé.
+    let wp = paths.www().join("blog");
+    std::fs::create_dir_all(&wp).unwrap();
+    std::fs::write(wp.join("wp-config.php"), "<?php define( 'DB_NAME', 'blog' );").unwrap();
+    let e = changer_de_moteur(&wp, "blog", &st.db_client(&pg).unwrap(), &pg, settings.ports.postgresql).await.unwrap_err();
+    assert_eq!(e.code(), "base.wordpress_postgresql");
+
+    // PHP se connecte à MySQL (caching_sha2_password sans mot de passe) et à PostgreSQL.
+    let php = pkg("php");
+    let ini = rustserv_core::php::ensure_php_ini(&paths, &php.path, &php.version, &settings).unwrap();
+    let code = format!(
+        "$m = new mysqli('127.0.0.1', 'root', '', 'appli', {}); echo 'mysql ', $m->server_info, PHP_EOL; $p = new PDO('pgsql:host=127.0.0.1;port={};dbname=appli', 'postgres', ''); echo 'pgsql ', $p->query('select current_database()')->fetchColumn();",
+        settings.ports.mysql, settings.ports.postgresql
+    );
+    let o = std::process::Command::new(php.path.join("php.exe"))
+        .args(["-c", &ini.display().to_string(), "-d", "extension=mysqli", "-d", "extension=pdo_pgsql", "-r", &code])
+        .env("PATH", format!("{};{}", php.path.display(), std::env::var("PATH").unwrap()))
+        .output()
+        .unwrap();
+    let sortie = String::from_utf8_lossy(&o.stdout).to_string();
+    println!("PHP → {sortie} {}", String::from_utf8_lossy(&o.stderr));
+    assert!(sortie.contains("mysql 8.4.") && sortie.contains("pgsql appli"), "{sortie}");
+
+    // Choix enregistré + vue Services.
+    let mut s2 = settings.clone();
+    s2.set_choix_base("appli", Some(&ChoixBase { moteur: Moteur::Postgresql, branche: "17".into() }));
+    let vue = orch.overview(&s2, &installed);
+    for m in ["mysql", "postgresql"] {
+        let g = vue.iter().find(|g| g.software == m).unwrap_or_else(|| panic!("carte {m}"));
+        assert!(matches!(g.state, ServiceState::EnCours { .. }), "{m} : {:?}", g.state);
+    }
+
+    // Arrêt propre (mysqladmin shutdown / pg_ctl stop), puis redémarrage : les données sont là.
+    orch.stop(Group::Mysql).await.unwrap();
+    orch.stop(Group::Postgresql).await.unwrap();
+    assert!(!ports::is_listening(settings.ports.mysql) && !ports::is_listening(settings.ports.postgresql));
+    let log_my = std::fs::read_to_string(paths.logs().join("mysql-error.log")).unwrap_or_default();
+    let log_pg = std::fs::read_to_string(paths.logs().join("postgresql.log")).unwrap_or_default();
+    assert!(log_my.contains("Shutdown complete"), "arrêt MySQL : {}", &log_my[log_my.len().saturating_sub(800)..]);
+    assert!(log_pg.contains("database system is shut down"), "arrêt PostgreSQL : {}", &log_pg[log_pg.len().saturating_sub(800)..]);
+    orch.start(Group::Mysql, &settings, &installed).await.unwrap();
+    orch.start(Group::Postgresql, &settings, &installed).await.unwrap();
+    assert!(sql(&st.db_client(&my).unwrap(), settings.ports.mysql, "SELECT nom FROM appli.t").ends_with("élément"));
+    assert_eq!(psql("SELECT datname FROM pg_database WHERE datname = 'appli'"), "appli");
+    orch.supervisor().stop_all().await;
+}
+
+/// Adminer connecté automatiquement à MySQL (root) et à PostgreSQL (postgres, extension pgsql
+/// activée dans le PHP par défaut). Réutilise `target/pile-bases` (voir `mysql_et_postgresql_reels`).
+#[tokio::test]
+#[ignore]
+async fn adminer_mysql_et_postgresql() {
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    use rustserv_core::php::extensions::ExtState;
+    let paths = Paths::new(racine().with_file_name("pile-bases"));
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    for (id, b) in [("nginx", None), ("php", Some("8.3")), ("mysql", Some("8.4")), ("postgresql", Some("17")), ("adminer", None)] {
+        installe(&inst, &cat, id, b).await;
+    }
+    let installed = inst.installed().unwrap();
+    let mut settings = Settings::default();
+    settings.ports.http = libre();
+    settings.ports.mysql = libre();
+    settings.ports.postgresql = libre();
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    let php = installed.iter().find(|p| p.package == "php").unwrap().version.clone();
+    rustserv_core::php::ensure_php_ini(&paths, &installed.iter().find(|p| p.package == "php").unwrap().path, &php, &settings).unwrap();
+    for ext in ["pgsql", "pdo_pgsql"] {
+        let etat = orch.extensions(&inst, &settings, &php).await.unwrap();
+        if etat.iter().any(|x| x.name == ext && matches!(x.state, ExtState::Inactive)) {
+            orch.set_extension(&inst, &settings, &php, ext, true).await.unwrap_or_else(|e| panic!("{ext} : {e}"));
+        }
+    }
+    for g in [Group::Mysql, Group::Postgresql, Group::Web] {
+        orch.start(g, &settings, &installed).await.unwrap_or_else(|e| panic!("{g:?} : {e}"));
+    }
+    let base = format!("http://127.0.0.1:{}", settings.ports.http);
+    for (requete, utilisateur, attendu) in [
+        (format!("?port={}", settings.ports.mysql), "username=root", "information_schema"),
+        (format!("?port={}&driver=pgsql", settings.ports.postgresql), "username=postgres", "postgres"),
+    ] {
+        let client = reqwest::Client::builder().no_proxy().cookie_store(true).redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let r = client.get(format!("{base}/adminer/{requete}")).send().await.unwrap();
+        let code = r.status().as_u16();
+        let lieu = r.headers().get("location").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        println!("/adminer/{requete} → {code} {lieu}");
+        assert!(code == 302 || code == 303, "connexion automatique attendue, reçu {code} : {}", r.text().await.unwrap_or_default().chars().take(600).collect::<String>());
+        assert!(lieu.contains(utilisateur), "{lieu}");
+        let url = if lieu.starts_with("http") { lieu.clone() } else if lieu.starts_with('/') { format!("{base}{lieu}") } else { format!("{base}/adminer/{lieu}") };
+        let page = client.get(&url).send().await.unwrap().text().await.unwrap();
+        assert!(page.contains(attendu) && !page.contains("Invalid credentials"), "{url} :\n{}", page.chars().take(1200).collect::<String>());
+        println!("  connecté ({} octets)", page.len());
+    }
+    orch.supervisor().stop_all().await;
 }

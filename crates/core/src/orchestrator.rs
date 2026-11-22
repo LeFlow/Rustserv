@@ -1,7 +1,8 @@
 //! Pilotage de la pile par **groupes** (ce que voit l'utilisateur) :
 //! - `web`     : nginx ou Apache selon les réglages (démarre PHP avant lui) ;
 //! - `php`     : tous les processus php-cgi des versions utilisées ;
-//! - `mariadb` : le serveur de bases de données.
+//! - `mariadb`, `mysql`, `postgresql` : les serveurs de bases de données (toutes les
+//!   instances nécessaires de chaque moteur : version par défaut + versions des sites).
 //!
 //! Les opérations lourdes (génération et validation des configs, initialisation
 //! de MariaDB) sont exécutées hors du thread asynchrone.
@@ -12,7 +13,8 @@ use crate::paths::Paths;
 use crate::php::{self, pool_ports, MigrationReport};
 use std::sync::atomic::AtomicBool;
 use crate::process::{ServiceSpec, ServiceState, StatusEvent, Supervisor};
-use crate::services::{Stack, APACHE, MARIADB, NGINX};
+use crate::db::Moteur;
+use crate::services::{Stack, APACHE, NGINX};
 use crate::settings::{Settings, WebServer};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,10 +25,31 @@ pub enum Group {
     Web,
     Php,
     Mariadb,
+    Mysql,
+    Postgresql,
 }
 
 impl Group {
-    pub const ALL: [Group; 3] = [Group::Web, Group::Php, Group::Mariadb];
+    pub const ALL: [Group; 5] = [Group::Web, Group::Php, Group::Mariadb, Group::Mysql, Group::Postgresql];
+    pub const BASES: [Group; 3] = [Group::Mariadb, Group::Mysql, Group::Postgresql];
+
+    /// Moteur de bases de données du groupe (None pour web et php).
+    pub fn moteur(self) -> Option<Moteur> {
+        match self {
+            Group::Mariadb => Some(Moteur::Mariadb),
+            Group::Mysql => Some(Moteur::Mysql),
+            Group::Postgresql => Some(Moteur::Postgresql),
+            _ => None,
+        }
+    }
+
+    pub fn de_moteur(m: Moteur) -> Group {
+        match m {
+            Moteur::Mariadb => Group::Mariadb,
+            Moteur::Mysql => Group::Mysql,
+            Moteur::Postgresql => Group::Postgresql,
+        }
+    }
 }
 
 /// Vue d'un groupe pour l'interface.
@@ -44,7 +67,7 @@ pub struct GroupView {
     pub members: Vec<StatusEvent>,
     /// Fichier journal principal du groupe.
     pub log_file: String,
-    /// Instances (MariaDB multi-versions) : id de service, version, port.
+    /// Instances (bases multi-versions) : id de service, version, port.
     pub instances: Vec<Instance>,
 }
 
@@ -57,9 +80,9 @@ pub struct Instance {
     pub defaut: bool,
 }
 
-/// Le service appartient-il à MariaDB (« mariadb » ou « mariadb-11.4 ») ?
-fn est_mariadb(id: &str) -> bool {
-    id == MARIADB || id.starts_with("mariadb-")
+/// Le service est-il une instance du moteur (« mysql » ou « mysql-8.0 ») ?
+fn est_instance(m: Moteur, id: &str) -> bool {
+    id == m.paquet() || id.strip_prefix(m.paquet()).is_some_and(|r| r.starts_with('-'))
 }
 
 pub struct Orchestrator {
@@ -122,20 +145,25 @@ impl Orchestrator {
                 let spec = self.build(settings, installed, |st| Ok(vec![st.web_server()?])).await?;
                 self.start_specs(spec).await
             }
-            Group::Mariadb => {
-                let specs = self.build(settings, installed, |st| st.mariadb_specs()).await?;
+            Group::Mariadb | Group::Mysql | Group::Postgresql => {
+                let m = group.moteur().unwrap();
+                let specs = self.build(settings, installed, move |st| st.db_specs(m)).await?;
                 self.start_specs(specs).await
             }
         }
     }
 
-    /// Démarre (si besoin) l'instance MariaDB d'une version précise et renvoie son port.
-    pub async fn ensure_mariadb(&self, settings: &Settings, installed: &[InstalledPackage], pkg: &InstalledPackage) -> Result<u16> {
+    /// Démarre (si besoin) l'instance d'une version précise d'un moteur et renvoie son port.
+    pub async fn ensure_db(&self, settings: &Settings, installed: &[InstalledPackage], pkg: &InstalledPackage) -> Result<u16> {
         let p = pkg.clone();
-        let spec = self.build(settings, installed, move |st| Ok(vec![st.mariadb_spec(&p)?])).await?;
+        let spec = self.build(settings, installed, move |st| Ok(vec![st.db_spec(&p)?])).await?;
         let port = spec[0].ports[0];
         self.start_specs(spec).await?;
         Ok(port)
+    }
+
+    pub async fn ensure_mariadb(&self, settings: &Settings, installed: &[InstalledPackage], pkg: &InstalledPackage) -> Result<u16> {
+        self.ensure_db(settings, installed, pkg).await
     }
 
     /// Arrête un groupe. Arrêter PHP arrête aussi le serveur web (qui en dépend).
@@ -147,7 +175,10 @@ impl Orchestrator {
                 self.supervisor.stop(APACHE).await?;
                 self.supervisor.states().into_iter().map(|s| s.id).filter(|id| id.starts_with("php-")).collect()
             }
-            Group::Mariadb => self.supervisor.states().into_iter().map(|s| s.id).filter(|id| est_mariadb(id)).collect(),
+            Group::Mariadb | Group::Mysql | Group::Postgresql => {
+                let m = group.moteur().unwrap();
+                self.supervisor.states().into_iter().map(|s| s.id).filter(|id| est_instance(m, id)).collect()
+            }
         };
         futures_util::future::join_all(ids.iter().map(|id| self.supervisor.stop(id))).await;
         Ok(())
@@ -165,14 +196,16 @@ impl Orchestrator {
         let actif = |id: &str| states.iter().any(|s| s.id == id && !matches!(s.state, ServiceState::Arrete | ServiceState::Erreur { .. }));
         let php_actif = states.iter().any(|s| s.id.starts_with("php-") && actif(&s.id));
         let web_actif = actif(NGINX) || actif(APACHE);
-        // MariaDB : instances inutiles arrêtées, nouvelles démarrées (si MariaDB tournait).
-        if states.iter().any(|s| est_mariadb(&s.id) && actif(&s.id)) {
-            let st = Stack::new(&self.paths, settings, installed);
-            let voulues: std::collections::HashSet<String> = st.mariadb_needed().into_iter().map(|p| st.mariadb_instance(p)).collect();
-            for s in states.iter().filter(|s| est_mariadb(&s.id) && !voulues.contains(&s.id)) {
-                self.supervisor.stop(&s.id).await?;
+        // Bases : pour chaque moteur qui tournait, instances inutiles arrêtées, nouvelles démarrées.
+        for m in Moteur::TOUS {
+            if states.iter().any(|s| est_instance(m, &s.id) && actif(&s.id)) {
+                let st = Stack::new(&self.paths, settings, installed);
+                let voulues: std::collections::HashSet<String> = st.db_needed(m).into_iter().map(|p| st.db_instance(p)).collect();
+                for s in states.iter().filter(|s| est_instance(m, &s.id) && !voulues.contains(&s.id)) {
+                    self.supervisor.stop(&s.id).await?;
+                }
+                self.start(Group::de_moteur(m), settings, installed).await?;
             }
-            self.start(Group::Mariadb, settings, installed).await?;
         }
         if !php_actif && !web_actif {
             return Ok(());
@@ -284,8 +317,10 @@ impl Orchestrator {
             states.iter().any(|s| pred(&s.id) && !matches!(s.state, ServiceState::Arrete | ServiceState::Erreur { .. }))
         };
         let mut g = Vec::new();
-        if actif(&|id| est_mariadb(id)) {
-            g.push(Group::Mariadb);
+        for m in Moteur::TOUS {
+            if actif(&|id| est_instance(m, id)) {
+                g.push(Group::de_moteur(m));
+            }
         }
         if actif(&|id| id.starts_with("php-")) {
             g.push(Group::Php);
@@ -298,7 +333,7 @@ impl Orchestrator {
 
     /// Redémarre **uniquement ce qui tournait**, avec les réglages et configurations
     /// actuels (ports, serveur web, php.ini modifié à la main…). Ordre : arrêt complet,
-    /// puis MariaDB, puis PHP + serveur web. Renvoie les groupes redémarrés ;
+    /// puis les bases, puis PHP + serveur web. Renvoie les groupes redémarrés ;
     /// continue même si un groupe échoue et renvoie la première erreur.
     pub async fn restart_running(&self, settings: &Settings, installed: &[InstalledPackage]) -> Result<Vec<Group>> {
         let groupes = self.running_groups();
@@ -308,7 +343,7 @@ impl Orchestrator {
         tracing::info!(?groupes, "redémarrage des services en marche");
         self.supervisor.stop_all().await;
         let mut premiere = None;
-        for g in [Group::Mariadb, Group::Web, Group::Php] {
+        for g in [Group::Mariadb, Group::Mysql, Group::Postgresql, Group::Web, Group::Php] {
             // Le web démarre PHP lui-même : PHP seul seulement s'il tournait sans serveur web.
             let lancer = groupes.contains(&g) && !(g == Group::Php && groupes.contains(&Group::Web));
             if lancer {
@@ -320,12 +355,12 @@ impl Orchestrator {
         premiere.map_or(Ok(groupes), Err)
     }
 
-    /// Démarre tout : MariaDB, puis PHP, puis le serveur web.
+    /// Démarre tout : les bases installées, puis PHP, puis le serveur web.
     /// Continue même si un groupe échoue et renvoie la première erreur.
     pub async fn start_all(&self, settings: &Settings, installed: &[InstalledPackage]) -> Result<()> {
         let mut premiere = None;
-        for g in [Group::Mariadb, Group::Web] {
-            let pkg = if g == Group::Mariadb { MARIADB } else { web_software(settings) };
+        for g in [Group::Mariadb, Group::Mysql, Group::Postgresql, Group::Web] {
+            let pkg = g.moteur().map(Moteur::paquet).unwrap_or_else(|| web_software(settings));
             if !installed.iter().any(|p| p.package == pkg) {
                 continue; // non installé : on l'ignore silencieusement pour « tout démarrer »
             }
@@ -346,12 +381,6 @@ impl Orchestrator {
         let web = web_software(settings);
         let web_pkg = stack.pick(web, version_wanted(settings, web)).ok();
         let php_pkg = stack.default_php();
-        let db_pkg = stack.default_mariadb().ok();
-        let instances: Vec<Instance> = stack
-            .mariadb_needed()
-            .into_iter()
-            .map(|p| Instance { id: stack.mariadb_instance(p), version: p.version.clone(), port: stack.mariadb_port(p), defaut: stack.mariadb_instance(p) == MARIADB })
-            .collect();
 
         // Toutes les versions de PHP utilisées (défaut + sites).
         let php_needed = stack.php_needed();
@@ -392,27 +421,43 @@ impl Orchestrator {
                 log_file: php_pkg.map(|p| logs.join(format!("php-{}-error.log", p.version)).display().to_string()).unwrap_or_default(),
                 instances: vec![],
             },
-            GroupView {
-                group: Group::Mariadb,
-                software: MARIADB.into(),
-                version: (!instances.is_empty()).then(|| instances.iter().map(|i| i.version.clone()).collect::<Vec<_>>().join(", ")),
-                installed: db_pkg.is_some(),
-                ports: instances.iter().map(|i| i.port).collect(),
-                members: {
-                    let mut m = members_of(&|id| est_mariadb(id));
-                    for i in &instances {
-                        if !m.iter().any(|s| s.id == i.id) {
-                            m.push(StatusEvent { id: i.id.clone(), state: ServiceState::Arrete });
-                        }
-                    }
-                    m
-                },
-                state: ServiceState::Arrete,
-                log_file: logs.join("mariadb-error.log").display().to_string(),
-                instances,
-            },
         ]
         .into_iter()
+        .chain(Moteur::TOUS.into_iter().filter_map(|m| {
+            let defaut = stack.default_db(m).ok();
+            // MySQL / PostgreSQL : carte affichée seulement s'ils sont installés.
+            if defaut.is_none() && m != Moteur::Mariadb {
+                return None;
+            }
+            let instances: Vec<Instance> = stack
+                .db_needed(m)
+                .into_iter()
+                .map(|p| Instance { id: stack.db_instance(p), version: p.version.clone(), port: stack.db_port(p), defaut: stack.db_instance(p) == m.paquet() })
+                .collect();
+            let journal = match m {
+                Moteur::Postgresql => format!("{}.log", m.paquet()),
+                _ => format!("{}-error.log", m.paquet()),
+            };
+            Some(GroupView {
+                group: Group::de_moteur(m),
+                software: m.paquet().into(),
+                version: (!instances.is_empty()).then(|| instances.iter().map(|i| i.version.clone()).collect::<Vec<_>>().join(", ")),
+                installed: defaut.is_some(),
+                ports: instances.iter().map(|i| i.port).collect(),
+                members: {
+                    let mut mb = members_of(&|id| est_instance(m, id));
+                    for i in &instances {
+                        if !mb.iter().any(|s| s.id == i.id) {
+                            mb.push(StatusEvent { id: i.id.clone(), state: ServiceState::Arrete });
+                        }
+                    }
+                    mb
+                },
+                state: ServiceState::Arrete,
+                log_file: logs.join(journal).display().to_string(),
+                instances,
+            })
+        }))
         .map(|mut g| {
             g.state = aggregate(&g.members);
             g
@@ -475,5 +520,14 @@ mod tests {
         assert_eq!(aggregate(&[ev("a", run(2)), ev("b", ServiceState::Demarrage)]), ServiceState::Demarrage);
         let err = ServiceState::Erreur { erreur: serde_json::json!({"code": "x"}) };
         assert_eq!(aggregate(&[ev("a", run(1)), ev("b", err.clone())]), err);
+    }
+
+    #[test]
+    fn instances_des_moteurs() {
+        assert!(est_instance(Moteur::Mysql, "mysql"));
+        assert!(est_instance(Moteur::Mysql, "mysql-8.0"));
+        assert!(!est_instance(Moteur::Mysql, "mysqlx"));
+        assert!(!est_instance(Moteur::Mariadb, "mysql"));
+        assert!(est_instance(Moteur::Postgresql, "postgresql-16"));
     }
 }

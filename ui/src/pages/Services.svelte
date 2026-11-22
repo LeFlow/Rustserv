@@ -1,5 +1,5 @@
 <!--
-  Écran Services : état de chaque groupe (serveur web, PHP, MariaDB),
+  Écran Services : état de chaque groupe (serveur web, PHP, MariaDB, MySQL, PostgreSQL),
   boutons démarrer / arrêter / redémarrer et journaux.
   L'état se met à jour en direct grâce à l'événement « service-status ».
 -->
@@ -7,7 +7,7 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, type GroupView, type Groupe } from "../lib/api";
+  import { api, type GroupView, type Groupe, nomMoteur, type Moteur } from "../lib/api";
   import { formatPorts, groupesPhp } from "../lib/format";
 
   let { allerAuCatalogue }: { allerAuCatalogue: () => void } = $props();
@@ -73,12 +73,15 @@
     }
   }
 
+  /** Groupe d'un moteur de bases de données ? */
+  const estBase = (g: Groupe) => g === "mariadb" || g === "mysql" || g === "postgresql";
+
   /** Ouvre Adminer (installé et services démarrés automatiquement si besoin). */
-  async function gererBases(port: number | null = null) {
+  async function gererBases(port: number | null = null, moteur: Moteur | null = null) {
     erreur = null;
     occupe.adminer = true;
     try {
-      await openUrl(await api.adminerOpen(port));
+      await openUrl(await api.adminerOpen(port, moteur));
     } catch (e) {
       erreur = tErreur(e);
     } finally {
@@ -175,24 +178,24 @@
       </div>
     {/if}
 
-    {#if g.group === "mariadb" && g.instances.length > 1}
-      <!-- Une ligne par instance (MariaDB multi-versions), avec son accès Adminer. -->
+    {#if estBase(g.group) && g.instances.length > 1}
+      <!-- Une ligne par instance (bases multi-versions), avec son accès Adminer. -->
       <div class="pool">
         {#each g.instances as i (i.id)}
           {@const m = g.members.find((x) => x.id === i.id)}
           <span class="version-pool">
             <span class="pastille petite {m?.state.etat ?? 'arrete'}"></span>
-            <span class="mono">MariaDB {i.version}</span>
+            <span class="mono">{nomMoteur(g.software)} {i.version}</span>
             <span class="muted">· port {i.port}{i.defaut ? ` · ${t("services.par_defaut")}` : ""}</span>
-            {#if !i.defaut}<button class="lien" disabled={occupe.adminer} onclick={() => gererBases(i.port)}>🗄 Adminer</button>{/if}
+            {#if !i.defaut}<button class="lien" disabled={occupe.adminer} onclick={() => gererBases(i.port, g.group as Moteur)}>🗄 Adminer</button>{/if}
           </span>
         {/each}
       </div>
     {/if}
 
-    {#if g.group === "mariadb" && g.installed}
+    {#if estBase(g.group) && g.installed}
       <div class="bas">
-        <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={() => gererBases()}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
+        <button disabled={occupe.adminer} title={t("services.adminer_aide", { moteur: nomMoteur(g.software) })} onclick={() => gererBases(null, g.group as Moteur)}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
       </div>
     {/if}
 

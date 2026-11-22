@@ -1,0 +1,28 @@
+# ------------------------------------------------------------------
+# Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
+# Pour personnaliser, copiez ce gabarit dans etc/templates/mysql.ini.j2
+# ------------------------------------------------------------------
+[mysqld]
+basedir="{{ server_dir }}"
+datadir="{{ datadir }}"
+port={{ port }}
+# Accessible uniquement depuis cette machine.
+bind-address=127.0.0.1
+# Pas de X Protocol (port 33060 : empêcherait deux instances de tourner ensemble).
+mysqlx=OFF
+# Pas de journal binaire (réplication) : inutile en développement, prend de la place.
+disable-log-bin
+log-error="{{ logs }}/{{ instance }}-error.log"
+pid-file="{{ tmp }}/{{ instance }}/mysql.pid"
+tmpdir="{{ tmp }}/{{ instance }}"
+
+character-set-server=utf8mb4
+max_allowed_packet=256M
+innodb_buffer_pool_size=256M
+# Pas de résolution DNS des clients : connexions locales plus rapides.
+skip-name-resolve
+
+[client]
+port={{ port }}
+host=127.0.0.1
+default-character-set=utf8mb4

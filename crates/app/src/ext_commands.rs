@@ -102,3 +102,33 @@ pub fn open_path(app: AppHandle, state: State<'_, AppState>, path: String) -> Re
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| Error::Interne(e.to_string()))
 }
+
+/// Active `pgsql` et `pdo_pgsql` dans le PHP d'un site (ou le PHP par défaut, pour Adminer)
+/// si elles ne le sont pas déjà. Un échec est seulement journalisé : il ne doit pas
+/// empêcher l'action principale (changement de base, ouverture d'Adminer).
+pub async fn activer_pgsql(
+    state: &AppState,
+    settings: &rustserv_core::Settings,
+    installed: &[rustserv_core::catalog::InstalledPackage],
+    site: Option<&str>,
+) {
+    use rustserv_core::php::extensions::ExtState;
+    let st = rustserv_core::services::Stack::new(&state.paths, settings, installed);
+    let php = match site {
+        Some(s) => st.site_php(s),
+        None => st.default_php(),
+    };
+    let Some(version) = php.map(|p| p.version.clone()) else { return };
+    let etat = match state.orchestrator.extensions(&state.installer, settings, &version).await {
+        Ok(v) => v,
+        Err(e) => return tracing::warn!(erreur = %e, "extensions PHP illisibles"),
+    };
+    for ext in ["pgsql", "pdo_pgsql"] {
+        if etat.iter().any(|x| x.name == ext && matches!(x.state, ExtState::Inactive)) {
+            match state.orchestrator.set_extension(&state.installer, settings, &version, ext, true).await {
+                Ok(_) => tracing::info!(php = %version, extension = ext, "extension PostgreSQL activée"),
+                Err(e) => tracing::warn!(php = %version, extension = ext, erreur = %e, "activation impossible"),
+            }
+        }
+    }
+}

@@ -1,6 +1,6 @@
 <!--
   Page Terminal : onglets de terminaux PowerShell, chacun réglé sur le PHP
-  d'un site (PATH, php.ini), avec Composer et le client MariaDB disponibles.
+  d'un site (PATH, php.ini), avec Composer et le client de la base du site (MariaDB, MySQL ou psql) disponibles.
 -->
 <script lang="ts">
   import { onMount } from "svelte";

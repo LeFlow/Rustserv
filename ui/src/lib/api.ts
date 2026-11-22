@@ -69,7 +69,8 @@ export interface InstallProgress {
 
 // ------------------------------------------------------------ services
 
-export type Groupe = "web" | "php" | "mariadb";
+export type Groupe = "web" | "php" | "mariadb" | "mysql" | "postgresql";
+export type Moteur = "mariadb" | "mysql" | "postgresql";
 
 export type EtatService =
   | { etat: "arrete" }
@@ -99,8 +100,8 @@ export interface GroupView {
 
 export interface Settings {
   web_server: "nginx" | "apache";
-  ports: { http: number; https: number; mariadb: number };
-  versions: { nginx: string | null; apache: string | null; mariadb: string | null; php: string | null };
+  ports: { http: number; https: number; mariadb: number; mysql: number; postgresql: number };
+  versions: { nginx: string | null; apache: string | null; mariadb: string | null; mysql: string | null; postgresql: string | null; php: string | null };
   php_pool_size: number;
   tld: string;
   timezone: string;
@@ -155,15 +156,27 @@ export interface SiteView {
   php_missing: boolean;
   local_url: string;
   wordpress: boolean;
-  mariadb_choice: string | null;
-  mariadb_version: string | null;
+  /** Base choisie (« mysql:8.4 », null = par défaut), moteur et version réellement utilisés. */
+  db_choice: string | null;
+  db_moteur: Moteur | null;
+  db_version: string | null;
 }
 
-export interface MariadbVersion {
+/** Version installée d'un moteur de bases de données. */
+export interface BaseVersion {
+  moteur: Moteur;
   branch: string;
   version: string;
   port: number;
+  /** Version par défaut de ce moteur (port des réglages). */
   defaut: boolean;
+  /** Valeur à enregistrer pour un site (« mysql:8.4 »). */
+  choix: string;
+}
+
+/** Nom affiché d'un moteur. */
+export function nomMoteur(m: string | null | undefined): string {
+  return m === "mysql" ? "MySQL" : m === "postgresql" ? "PostgreSQL" : "MariaDB";
 }
 
 // ------------------------------------------------------------ extensions
@@ -384,10 +397,10 @@ export const api = {
   startAll: () => invoke<void>("services_start_all"),
   stopAll: () => invoke<void>("services_stop_all"),
   restartAll: () => invoke<Groupe[]>("services_restart_all"),
-  adminerOpen: (port: number | null = null) => invoke<string>("adminer_open", { port }),
-  mariadbVersions: () => invoke<MariadbVersion[]>("mariadb_versions"),
-  siteSetMariadb: (site: string, branch: string | null) =>
-    invoke<{ base: string | null; de: string; vers: string; port: number }>("site_set_mariadb", { site, branch }),
+  adminerOpen: (port: number | null = null, moteur: Moteur | null = null) => invoke<string>("adminer_open", { port, moteur }),
+  basesVersions: () => invoke<BaseVersion[]>("bases_versions"),
+  siteSetBase: (site: string, choix: string | null) =>
+    invoke<{ base: string | null; de: string; vers: string; port: number; copiee: boolean }>("site_set_base", { site, choix }),
   restartPending: () => invoke<boolean>("services_restart_pending"),
   serviceLog: (group: Groupe) => invoke<string>("service_log", { group }),
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>
