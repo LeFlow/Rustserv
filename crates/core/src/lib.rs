@@ -17,6 +17,7 @@ pub mod paths;
 pub mod php;
 pub mod platform;
 pub mod process;
+pub mod relocation;
 pub mod services;
 pub mod settings;
 pub mod sites;

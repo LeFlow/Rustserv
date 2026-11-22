@@ -26,6 +26,10 @@ fn main() {
     paths.ensure_layout().expect("impossible de créer l'arborescence de Rustserv");
     let _log_guard = init_logs(&paths);
     tracing::info!(racine = %paths.root().display(), "démarrage de Rustserv");
+    // Dossier déplacé (version portable copiée ailleurs) : chemins des configurations corrigés.
+    if let Err(e) = rustserv_core::relocation::relocate(&paths) {
+        tracing::error!(erreur = %e, "correction des chemins après déplacement impossible");
+    }
 
     // TODO : afficher une boîte de dialogue native si l'état ne peut pas être créé
     // (ex. catalog.json corrompu) au lieu d'un simple message en console.
