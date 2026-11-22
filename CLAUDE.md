@@ -194,6 +194,13 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   `Catalog::absorb` y **ajoute** les paquets/versions nouveaux de la version intégrée (rien n'est
   retiré ni modifié). Bug corrigé : un catalog.json de la phase 1 n'avait jamais reçu Composer.
   Si `catalog.json` est corrompu → repli sur le catalogue intégré + avertissement dans l'UI.
+- Mises à jour (`catalog::remote::fetch_all`) : php (releases.json), nginx (download.html, versions
+  stables à mineure paire, SHA256 **calculé**), apache (Apache Lounge + .txt SHA256), mariadb (REST API,
+  branches Stable), composer (/versions + .sha256sum), adminer et wp-cli (API GitHub, `digest`).
+  Bouton dans Catalogue + vérification auto au démarrage si > 24 h (`app/src/verification.rs`,
+  `etc/catalog-verification.json`). Badges « ⬆ disponible » / « nouveau ».
+- MariaDB : `Stack::pick` sans choix explicite garde la version la plus récente **dont le dossier de
+  données existe** (installer une nouvelle branche ne bascule pas vers une base vide).
 
 ## Choix techniques validés
 
