@@ -208,7 +208,19 @@
       "php": "PHP",
       "database": "Bases de données",
       "tool": "Outils"
-    }
+    },
+    "maj_bouton": "Rechercher des mises à jour",
+    "maj_recherche": "Recherche en cours…",
+    "maj_derniere": "Dernière recherche : {date}",
+    "maj_jamais": "Aucune recherche effectuée",
+    "maj_auto": "vérification automatique une fois par jour au démarrage",
+    "maj_trouvees": "Nouvelles versions ajoutées au catalogue : {liste}.",
+    "maj_aucune": "Le catalogue est à jour.",
+    "maj_erreurs": "Sources injoignables pour l'instant : {liste}.",
+    "maj_dispo": "{version} disponible",
+    "maj_mariadb": "Nouvelle branche de MariaDB : vos bases restent sur la version actuelle (Rustserv ne bascule pas automatiquement vers une base vide).",
+    "maj_php": "Les mises à jour d'une branche (8.3.x → 8.3.y) se font depuis la page PHP, en reprenant le php.ini et les extensions.",
+    "nouveau": "nouveau"
   },
   "erreurs": {
     "annule": "Opération annulée.",

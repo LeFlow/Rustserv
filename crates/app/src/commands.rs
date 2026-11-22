@@ -38,6 +38,8 @@ pub struct CatalogView {
     packages: Vec<PackageView>,
     /// Erreur de chargement de catalog.json (repli sur le catalogue intégré).
     warning: Option<serde_json::Value>,
+    /// Dernière recherche de mises à jour (horodatage Unix).
+    derniere_verification: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -46,6 +48,8 @@ pub struct PackageView {
     name: String,
     category: Category,
     releases: Vec<ReleaseView>,
+    /// Version plus récente que toutes celles installées (si le paquet est installé).
+    maj: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -55,11 +59,14 @@ pub struct ReleaseView {
     build: Option<Build>,
     installed: bool,
     installing: bool,
+    /// Apparue lors de la dernière recherche de mises à jour.
+    nouveau: bool,
 }
 
 /// Catalogue + état d'installation de chaque version.
 #[tauri::command]
 pub fn catalog_list(state: State<'_, AppState>) -> Result<CatalogView> {
+    let verif = crate::verification::lire(&state.paths);
     let cat = state.catalog.read().map_err(|e| Error::Interne(e.to_string()))?;
     let jobs = state.jobs.lock().map_err(|e| Error::Interne(e.to_string()))?;
     let packages = cat
@@ -75,16 +82,30 @@ pub fn catalog_list(state: State<'_, AppState>) -> Result<CatalogView> {
                     build: r.build.clone(),
                     installed: state.installer.is_installed(id, &r.version),
                     installing: jobs.contains_key(&job_key(id, &r.version)),
+                    nouveau: verif.as_ref().is_some_and(|v| v.ajouts.contains(&format!("{id} {}", r.version))),
                 })
                 .collect();
             releases.sort_by(|a, b| version::cmp(&b.version, &a.version));
-            PackageView { id: id.clone(), name: p.name.clone(), category: p.category, releases }
+            let installee = releases.iter().filter(|r| r.installed).map(|r| r.version.clone()).max_by(|a, b| version::cmp(a, b));
+            let maj = installee.and_then(|i| releases.iter().find(|r| !r.installed && version::cmp(&r.version, &i).is_gt()).map(|r| r.version.clone()));
+            PackageView { id: id.clone(), name: p.name.clone(), category: p.category, releases, maj }
         })
         .collect::<Vec<_>>();
     // Regroupement par catégorie (serveurs web ensemble…), puis par nom.
     let mut packages = packages;
     packages.sort_by(|a, b| a.category.ordre().cmp(&b.category.ordre()).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-    Ok(CatalogView { updated: cat.updated.clone(), packages, warning: state.catalog_warning.clone() })
+    Ok(CatalogView {
+        updated: cat.updated.clone(),
+        packages,
+        warning: state.catalog_warning.clone(),
+        derniere_verification: verif.map(|v| v.verifie_le),
+    })
+}
+
+/// Recherche de nouvelles versions sur les sites officiels (tous les paquets).
+#[tauri::command]
+pub async fn catalog_check_updates(state: State<'_, AppState>) -> Result<crate::verification::Verification> {
+    crate::verification::verifier(&state).await
 }
 
 /// Lance l'installation ; la progression arrive via l'événement `install-progress`.

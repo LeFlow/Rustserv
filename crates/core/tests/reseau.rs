@@ -49,6 +49,31 @@ async fn releases_php_officielles() {
     println!("versions absentes du catalogue intégré : {ajout:?}");
 }
 
+/// Recherche de mises à jour sur toutes les sources officielles.
+#[tokio::test]
+#[ignore]
+async fn sources_de_mises_a_jour() {
+    let client = reqwest::Client::builder().user_agent("Rustserv-test").build().unwrap();
+    let t = rustserv_core::catalog::remote::fetch_all(&client).await;
+    for (p, r) in &t.releases {
+        println!("{p:<9} {:<10} {}  sha {}…", r.version, r.url, &r.sha256[..12]);
+    }
+    for (p, e) in &t.erreurs {
+        println!("ERREUR {p} : {e}");
+    }
+    assert!(t.erreurs.is_empty(), "sources en échec : {:?}", t.erreurs);
+    for p in ["php", "nginx", "apache", "mariadb", "composer", "adminer", "wp-cli"] {
+        assert!(t.releases.iter().any(|(x, _)| x == p), "{p} : aucune version trouvée");
+    }
+    // Toutes les versions trouvées doivent être acceptées par le catalogue (https, SHA256…).
+    let mut cat = Catalog::embedded().unwrap();
+    for p in ["php", "nginx", "apache", "mariadb", "composer", "adminer", "wp-cli"] {
+        let v: Vec<_> = t.releases.iter().filter(|(x, _)| x == p).map(|(_, r)| r.clone()).collect();
+        let ajout = cat.merge(p, v).unwrap_or_else(|e| panic!("{p} : {e}"));
+        println!("{p} : nouvelles par rapport au catalogue intégré : {ajout:?}");
+    }
+}
+
 /// Installation réelle de Nginx dans un dossier temporaire.
 #[tokio::test]
 #[ignore]

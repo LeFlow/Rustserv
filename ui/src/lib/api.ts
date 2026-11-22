@@ -25,6 +25,7 @@ export interface ReleaseView {
   build: Build | null;
   installed: boolean;
   installing: boolean;
+  nouveau: boolean;
 }
 
 export interface PackageView {
@@ -32,12 +33,20 @@ export interface PackageView {
   name: string;
   category: Categorie;
   releases: ReleaseView[];
+  maj: string | null;
 }
 
 export interface CatalogView {
   updated: string;
   packages: PackageView[];
   warning: ErreurBackend | null;
+  derniere_verification: number | null;
+}
+
+export interface Verification {
+  verifie_le: number;
+  ajouts: string[];
+  erreurs: [string, string][];
 }
 
 export interface InstalledPackage {
@@ -373,6 +382,9 @@ export const api = {
 
   appInfo: () => invoke<AppInfo>("app_info"),
   catalogList: () => invoke<CatalogView>("catalog_list"),
+  catalogCheckUpdates: () => invoke<Verification>("catalog_check_updates"),
+  onCatalogUpdated: (cb: (v: Verification) => void): Promise<UnlistenFn> =>
+    listen<Verification>("catalog-updated", (e) => cb(e.payload)),
   install: (pkg: string, version: string) =>
     invoke<InstalledPackage>("catalog_install", { package: pkg, version }),
   cancel: (pkg: string, version: string) => invoke<void>("catalog_cancel", { package: pkg, version }),

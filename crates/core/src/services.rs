@@ -101,6 +101,19 @@ impl<'a> Stack<'a> {
             }
             tracing::warn!(package, version = w, "version choisie absente, utilisation de la plus récente");
         }
+        // MariaDB : chaque branche a son propre dossier de données. Installer une nouvelle
+        // branche ne doit pas faire basculer silencieusement sur une base VIDE : on garde la
+        // version la plus récente dont le dossier de données existe déjà.
+        if package == MARIADB {
+            let avec_donnees = self
+                .installed
+                .iter()
+                .filter(|p| p.package == MARIADB && self.mariadb_datadir(p).join("mysql").is_dir())
+                .max_by(|a, b| version::cmp(&a.version, &b.version));
+            if let Some(p) = avec_donnees {
+                return Ok(p);
+            }
+        }
         candidats
             .max_by(|a, b| version::cmp(&a.version, &b.version))
             .ok_or_else(|| Error::AucuneVersion { id: package.into() })
@@ -462,6 +475,19 @@ mod tests {
         // … sauf si une version est épinglée pour la branche.
         settings.php_pins.insert("8.3".into(), "8.3.9".into());
         assert_eq!(Stack::new(&paths, &settings, &installed).default_php().unwrap().version, "8.3.9");
+    }
+
+    #[test]
+    fn mariadb_reste_sur_la_version_qui_a_les_donnees() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        let installed = vec![pkg("mariadb", "12.3.4", t.path()), pkg("mariadb", "13.0.2", t.path())];
+        let settings = Settings::default();
+        let st = Stack::new(&paths, &settings, &installed);
+        assert_eq!(st.pick(MARIADB, None).unwrap().version, "13.0.2", "aucune donnée : la plus récente");
+        std::fs::create_dir_all(paths.data().join("mariadb-12.3").join("mysql")).unwrap();
+        assert_eq!(st.pick(MARIADB, None).unwrap().version, "12.3.4", "pas de bascule vers une base vide");
+        assert_eq!(st.pick(MARIADB, Some("13.0.2")).unwrap().version, "13.0.2", "choix explicite respecté");
     }
 
     #[test]

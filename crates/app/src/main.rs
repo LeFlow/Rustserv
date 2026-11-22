@@ -15,6 +15,7 @@ mod php_commands;
 mod site_commands;
 mod state;
 mod tray;
+mod verification;
 
 use rustserv_core::Paths;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -34,6 +35,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::catalog_list,
+            commands::catalog_check_updates,
             commands::catalog_install,
             commands::catalog_cancel,
             commands::catalog_uninstall,
@@ -97,6 +99,7 @@ fn main() {
                 .build()?;
             tray::create(app.handle())?;
             forward_service_events(app.handle());
+            verification::au_demarrage(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

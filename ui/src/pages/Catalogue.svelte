@@ -7,6 +7,7 @@
   import { t, tErreur } from "../i18n";
   import { api, type CatalogView, type InstallProgress, type ReleaseView } from "../lib/api";
   import { formatOctets } from "../lib/format";
+  import type { Verification } from "../lib/api";
 
   let catalogue = $state<CatalogView | null>(null);
   let erreur = $state<string | null>(null);
@@ -16,6 +17,30 @@
   let erreursLigne = $state<Record<string, string>>({});
   /** Versions affichées repliées : on montre par défaut la plus récente de chaque branche. */
   let toutAfficher = $state<Record<string, boolean>>({});
+  let recherche = $state(false);
+  let resultatRecherche = $state<string | null>(null);
+
+  /** Résumé lisible d'une recherche de mises à jour. */
+  function resumer(v: Verification): string {
+    let m = v.ajouts.length ? t("catalogue.maj_trouvees", { liste: v.ajouts.join(", ") }) : t("catalogue.maj_aucune");
+    if (v.erreurs.length) m += " " + t("catalogue.maj_erreurs", { liste: v.erreurs.map(([p]) => p).join(", ") });
+    return m;
+  }
+
+  async function rechercher() {
+    recherche = true;
+    resultatRecherche = null;
+    try {
+      resultatRecherche = resumer(await api.catalogCheckUpdates());
+    } catch (e) {
+      erreur = tErreur(e);
+    } finally {
+      recherche = false;
+      await charger();
+    }
+  }
+
+  const dateHeure = (ts: number) => new Date(ts * 1000).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
   const cle = (p: string, v: string) => `${p}@${v}`;
 
@@ -32,7 +57,12 @@
     const off = api.onInstallProgress((p) => {
       progression[cle(p.package, p.version)] = p;
     });
-    return () => { off.then((f) => f()); };
+    // Vérification automatique au démarrage terminée : affichage des nouveautés.
+    const off2 = api.onCatalogUpdated((v) => {
+      resultatRecherche = resumer(v);
+      charger();
+    });
+    return () => { off.then((f) => f()); off2.then((f) => f()); };
   });
 
   async function installer(pkg: string, r: ReleaseView) {
@@ -93,7 +123,14 @@
 {#if catalogue?.warning}<p class="avertissement">{t("catalogue.repli")} {tErreur(catalogue.warning)}</p>{/if}
 
 {#if catalogue}
-  <p class="muted">{t("catalogue.mis_a_jour", { date: catalogue.updated })}</p>
+  <div class="barre">
+    <button disabled={recherche} onclick={rechercher}>{recherche ? t("catalogue.maj_recherche") : `⟳ ${t("catalogue.maj_bouton")}`}</button>
+    <span class="muted petit">
+      {catalogue.derniere_verification ? t("catalogue.maj_derniere", { date: dateHeure(catalogue.derniere_verification) }) : t("catalogue.maj_jamais")}
+      · {t("catalogue.maj_auto")}
+    </span>
+  </div>
+  {#if resultatRecherche}<p class="info">{resultatRecherche}</p>{/if}
   {#each catalogue.packages as pkg, i (pkg.id)}
     {#if i === 0 || catalogue.packages[i - 1].category !== pkg.category}
       <h3 class="section">{t(`catalogue.sections.${pkg.category}`)}</h3>
@@ -102,14 +139,17 @@
       <header>
         <h3>{pkg.name}</h3>
         <span class="badge">{t(`catalogue.categorie.${pkg.category}`)}</span>
+        {#if pkg.maj}<span class="badge maj">⬆ {t("catalogue.maj_dispo", { version: pkg.maj })}</span>{/if}
       </header>
+      {#if pkg.maj && pkg.id === "mariadb"}<p class="muted petit">{t("catalogue.maj_mariadb")}</p>{/if}
+      {#if pkg.maj && pkg.id === "php"}<p class="muted petit">{t("catalogue.maj_php")}</p>{/if}
       <table>
         <tbody>
           {#each visibles(pkg.id, pkg.releases) as r (r.version)}
             {@const k = cle(pkg.id, r.version)}
             {@const p = progression[k]}
             <tr>
-              <td class="version">{r.version}</td>
+              <td class="version">{r.version}{#if r.nouveau} <span class="badge nouveau">{t("catalogue.nouveau")}</span>{/if}</td>
               <td class="muted mono">
                 {#if r.build}{r.build.thread_safe ? "TS" : "NTS"} · {r.build.compiler.toUpperCase()} · {r.build.arch}{/if}
               </td>
@@ -165,4 +205,10 @@
   .ok { color: var(--ok); }
   .erreur { color: var(--danger); font-size: 12px; margin-top: 4px; }
   .avertissement { color: var(--accent); }
+  .barre { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .info { color: var(--ok); }
+  .petit { font-size: 12px; }
+  .badge.maj { background: var(--accent); color: white; }
+  .badge.nouveau { background: var(--ok); color: white; font-weight: 400; }
+  td.version { width: 160px; }
 </style>
