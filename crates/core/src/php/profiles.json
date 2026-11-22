@@ -1,0 +1,23 @@
+{
+  "laravel": {
+    "nom": "Laravel",
+    "description": "Extensions exigées par Laravel 11/12, plus Redis pour le cache et les files d'attente.",
+    "extensions": ["bcmath", "ctype", "curl", "dom", "fileinfo", "filter", "intl", "mbstring", "openssl", "pdo", "pdo_mysql", "pdo_sqlite", "session", "tokenizer", "xml", "zip", "gd", "opcache"],
+    "pecl": ["redis"],
+    "ini": { "memory_limit": "512M" }
+  },
+  "wordpress": {
+    "nom": "WordPress",
+    "description": "Extensions recommandées par WordPress (santé du site au vert), plus Imagick pour les images.",
+    "extensions": ["curl", "dom", "exif", "fileinfo", "hash", "intl", "mbstring", "mysqli", "openssl", "xml", "zip", "gd", "opcache"],
+    "pecl": ["imagick"],
+    "ini": { "max_input_vars": "3000", "upload_max_filesize": "256M", "post_max_size": "256M", "max_execution_time": "300" }
+  },
+  "symfony": {
+    "nom": "Symfony",
+    "description": "Extensions exigées et recommandées par Symfony 7, plus APCu pour le cache.",
+    "extensions": ["ctype", "iconv", "intl", "mbstring", "pdo_mysql", "simplexml", "sodium", "tokenizer", "xml", "opcache"],
+    "pecl": ["apcu"],
+    "ini": { "realpath_cache_size": "4096K", "realpath_cache_ttl": "600", "opcache.max_accelerated_files": "20000" }
+  }
+}

@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod ext_commands;
 mod php_commands;
 mod state;
 mod tray;
@@ -50,6 +51,14 @@ fn main() {
             php_commands::php_upgrade,
             php_commands::sites_list,
             php_commands::site_set_php,
+            ext_commands::php_extensions,
+            ext_commands::php_extension_set,
+            ext_commands::php_pecl_list,
+            ext_commands::php_pecl_install,
+            ext_commands::php_profiles,
+            ext_commands::php_profile_plan,
+            ext_commands::php_profile_apply,
+            ext_commands::open_path,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {

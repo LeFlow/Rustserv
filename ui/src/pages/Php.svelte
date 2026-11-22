@@ -7,8 +7,11 @@
   import { t, tErreur } from "../i18n";
   import { api, type InstallProgress, type PhpVersionView, type PhpView } from "../lib/api";
   import { formatOctets } from "../lib/format";
+  import Extensions from "./Extensions.svelte";
 
   let { allerAuCatalogue }: { allerAuCatalogue: () => void } = $props();
+  /** Version dont le panneau Extensions est ouvert. */
+  let extensionsDe = $state<PhpVersionView | null>(null);
 
   let vue = $state<PhpView | null>(null);
   let erreur = $state<string | null>(null);
@@ -131,6 +134,7 @@
           <td class="petit">{v.sites.length ? v.sites.join(", ") : "—"}</td>
           <td class="mono petit">{v.active ? `${v.ports[0]}-${v.ports[v.ports.length - 1]}` : "—"}</td>
           <td class="actions">
+            <button class:primaire={extensionsDe?.version === v.version} onclick={() => (extensionsDe = extensionsDe?.version === v.version ? null : v)}>{t("php.extensions")}</button>
             {#if v.active && !v.default}
               <button onclick={() => action(() => api.phpSetDefault(v.branch))}>{t("php.definir_defaut")}</button>
             {/if}
@@ -158,6 +162,12 @@
     </tbody>
   </table>
   <p class="muted petit">{t("php.explication")}</p>
+{/if}
+
+{#if extensionsDe}
+  {#key extensionsDe.version}
+    <Extensions version={extensionsDe.version} ini={extensionsDe.ini} fermer={() => (extensionsDe = null)} />
+  {/key}
 {/if}
 
 <style>

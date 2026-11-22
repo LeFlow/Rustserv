@@ -13,12 +13,12 @@
 //! - [`install`]  : orchestration (bin/<paquet>/<paquet>-<version>).
 
 mod download;
-mod extract;
+pub(crate) mod extract;
 pub mod install;
 pub mod php_remote;
 pub mod version;
 
-pub use download::{download_verified, sha256_file};
+pub use download::{download_unverified, download_verified, sha256_file};
 pub use install::{InstallPhase, InstallProgress, InstalledPackage, Installer};
 
 use crate::error::{Error, Result};

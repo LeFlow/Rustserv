@@ -52,6 +52,25 @@ pub enum Error {
     #[error("PHP {version} invalide : {detail}")]
     PhpInvalide { version: String, detail: String },
 
+    /// Extension absente de cette version de PHP (pas de DLL dans ext/).
+    #[error("extension {extension} indisponible pour PHP {version}")]
+    ExtensionInconnue { extension: String, version: String },
+
+    /// Extension compilée dans PHP : impossible de la désactiver.
+    #[error("extension {extension} intégrée à PHP")]
+    ExtensionIntegree { extension: String },
+
+    /// D'autres extensions actives dépendent de celle-ci.
+    #[error("extension {extension} requise par {par}")]
+    ExtensionRequise { extension: String, par: String },
+
+    /// Aucun build PECL compatible avec cette branche de PHP.
+    #[error("aucun build PECL de {extension} pour PHP {branche}")]
+    PeclIntrouvable { extension: String, branche: String },
+
+    #[error("profil inconnu : {profil}")]
+    ProfilInconnu { profil: String },
+
     /// Réglages incohérents (ports en double…).
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
@@ -147,6 +166,11 @@ impl Error {
             Error::BaseInit { .. } => "service.base_init",
             Error::ReglagesInvalides { .. } => "reglages.invalides",
             Error::PhpInvalide { .. } => "php.invalide",
+            Error::ExtensionInconnue { .. } => "extension.inconnue",
+            Error::ExtensionIntegree { .. } => "extension.integree",
+            Error::ExtensionRequise { .. } => "extension.requise",
+            Error::PeclIntrouvable { .. } => "extension.pecl_introuvable",
+            Error::ProfilInconnu { .. } => "extension.profil_inconnu",
             Error::Fichier { .. } => "fichier.acces",
             Error::Io(_) => "io.generique",
             Error::JsonInvalide { .. } => "json.invalide",
@@ -191,6 +215,11 @@ impl Error {
             Error::Gabarit { nom, detail } => json!({ "nom": nom, "detail": detail }),
             Error::BaseInit { detail } | Error::ReglagesInvalides { detail } => json!({ "detail": detail }),
             Error::PhpInvalide { version, detail } => json!({ "version": version, "detail": detail }),
+            Error::ExtensionInconnue { extension, version } => json!({ "extension": extension, "version": version }),
+            Error::ExtensionIntegree { extension } => json!({ "extension": extension }),
+            Error::ExtensionRequise { extension, par } => json!({ "extension": extension, "par": par }),
+            Error::PeclIntrouvable { extension, branche } => json!({ "extension": extension, "branche": branche }),
+            Error::ProfilInconnu { profil } => json!({ "profil": profil }),
             Error::VcRuntime { requis, installe } => json!({
                 "requis": requis,
                 "installe": installe.clone().unwrap_or_else(|| "aucun".into()),
@@ -270,6 +299,11 @@ mod tests {
             Error::BaseInit { detail: s() },
             Error::ReglagesInvalides { detail: s() },
             Error::PhpInvalide { version: s(), detail: s() },
+            Error::ExtensionInconnue { extension: s(), version: s() },
+            Error::ExtensionIntegree { extension: s() },
+            Error::ExtensionRequise { extension: s(), par: s() },
+            Error::PeclIntrouvable { extension: s(), branche: s() },
+            Error::ProfilInconnu { profil: s() },
             Error::fichier("x", std::io::Error::other("x")),
             Error::Io(std::io::Error::other("x")),
             Error::JsonInvalide { fichier: s(), detail: s() },

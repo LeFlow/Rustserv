@@ -75,7 +75,44 @@
     "validation": "Installation et vérification…",
     "mis_a_jour": "PHP {de} a été mis à jour vers {vers} : php.ini et extensions repris.",
     "dll_copiees": "DLL reprises : {liste}.",
+    "extensions": "Extensions",
     "explication": "Une seule version par branche (7.4, 8.3…) est utilisée à la fois : la plus récente, sauf si vous en épinglez une. Les sites choisissent une branche : ils suivent donc automatiquement les mises à jour."
+  },
+  "ext": {
+    "titre": "Extensions de PHP {version}",
+    "resume": "{actives} actives sur {total}",
+    "ouvrir_ini": "Ouvrir php.ini",
+    "verification": "Modification et vérification par PHP…",
+    "en_erreur": "{n} extension(s) activée(s) ne se chargent pas : voir en rouge ci-dessous.",
+    "profils": "Profils",
+    "plan_titre": "Profil {profil} : changements prévus",
+    "plan_rien": "Tout est déjà en place pour ce profil.",
+    "plan_activer": "Activer :",
+    "plan_telecharger": "Télécharger puis activer :",
+    "plan_indispo": "Non disponibles pour cette version : {liste}.",
+    "plan_deja": "{n} extension(s) déjà présentes.",
+    "non_defini": "(non défini)",
+    "appliquer": "Appliquer",
+    "profil_ok": "Profil {profil} appliqué.",
+    "profil_echec_pecl": "⚠ {nom} non installée : {detail}",
+    "pecl": "Extensions à télécharger (PECL)",
+    "pecl_toutes": "Toutes les extensions PECL proposées sont installées.",
+    "pecl_ok": "{nom} {version} installée et activée.",
+    "liste": "Extensions",
+    "filtrer": "Filtrer (nom ou description)…",
+    "voir_integrees": "afficher les extensions intégrées",
+    "chargement": "Analyse des extensions…",
+    "activee": "{nom} activée.",
+    "desactivee": "{nom} désactivée.",
+    "depend": "Nécessite : {liste}",
+    "requiert": "Nécessite un logiciel externe : {lib}",
+    "integree_aide": "Compilée dans PHP : toujours active.",
+    "etat": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "integree": "Intégrée",
+      "erreur": "Activée mais ne se charge pas"
+    }
   },
   "sites": {
     "actualiser": "Actualiser",
@@ -157,7 +194,14 @@
       "base_init": "La création du dossier de données MariaDB a échoué :\n{detail}"
     },
     "php": {
-      "invalide": "PHP {version} ne démarre pas correctement avec son php.ini :\n{detail}"
+      "invalide": "PHP {version} ne démarre pas correctement avec ce php.ini (la modification a été annulée) :\n{detail}"
+    },
+    "extension": {
+      "inconnue": "L'extension « {extension} » n'est pas disponible pour PHP {version}.",
+      "integree": "L'extension « {extension} » est intégrée à PHP : elle est toujours active et ne peut pas être désactivée.",
+      "requise": "Impossible de désactiver « {extension} » : elle est nécessaire à {par}. Désactivez d'abord ces extensions.",
+      "pecl_introuvable": "Aucune version de « {extension} » n'est encore publiée pour PHP {branche}. Réessayez plus tard ou utilisez une autre version de PHP.",
+      "profil_inconnu": "Profil inconnu : {profil}."
     },
     "reglages": {
       "invalides": "Réglages non enregistrés : {detail}."

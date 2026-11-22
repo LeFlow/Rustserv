@@ -43,6 +43,12 @@ pub fn migrate_ini(paths: &Paths, old_dir: &Path, old_version: &str, new_dir: &P
     let dir = dest.parent().expect("php.ini sans dossier parent");
     std::fs::create_dir_all(dir).map_err(|e| Error::fichier(dir, e))?;
     std::fs::write(&dest, out).map_err(|e| Error::fichier(&dest, e))?;
+    // Journal des extensions PECL : mêmes DLL recopiées (copy_extra_dlls), même branche.
+    let pecl_src = src.with_file_name("pecl.json");
+    if pecl_src.is_file() {
+        let pecl_dest = dest.with_file_name("pecl.json");
+        std::fs::copy(&pecl_src, &pecl_dest).map_err(|e| Error::fichier(&pecl_dest, e))?;
+    }
     tracing::info!(old_version, new_version, "php.ini repris");
     Ok(true)
 }
@@ -108,7 +114,9 @@ mod tests {
         )
         .unwrap();
 
+        std::fs::write(ini_old.with_file_name("pecl.json"), "{}").unwrap();
         assert!(migrate_ini(&paths, &old, "8.3.12", &new, "8.3.15").unwrap());
+        assert!(php_ini_path(&paths, "8.3.15").with_file_name("pecl.json").is_file(), "journal PECL repris");
         let ini = IniFile::parse(&std::fs::read_to_string(php_ini_path(&paths, "8.3.15")).unwrap());
         assert_eq!(ini.get("memory_limit").as_deref(), Some("777M"), "réglage personnalisé conservé");
         assert_eq!(ini.get("extension_dir").unwrap(), format!("{}/ext", slash(&new)));

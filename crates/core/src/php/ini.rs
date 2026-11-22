@@ -175,6 +175,25 @@ impl IniFile {
         true
     }
 
+    /// Garantit que la ligne active de `dep` est placée **avant** celle de `ext`
+    /// (ordre de chargement : ex. mbstring avant exif). Renvoie `true` si une ligne a bougé.
+    pub fn ensure_loaded_before(&mut self, dep: &str, ext: &str) -> bool {
+        let exts = self.extensions();
+        let pos = |n: &str| exts.iter().find(|e| e.active && e.name == n).map(|e| e.line);
+        let (Some(d), Some(e)) = (pos(&dep.to_ascii_lowercase()), pos(&ext.to_ascii_lowercase())) else { return false };
+        if d < e {
+            return false;
+        }
+        let line = self.lines.remove(d);
+        self.lines.insert(e, line);
+        true
+    }
+
+    /// La directive est-elle définie (ligne active) ?
+    pub fn is_set(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
     /// Désactive une extension (commente toutes ses lignes actives). Renvoie `true` si changé.
     pub fn disable_extension(&mut self, name: &str) -> bool {
         let n = name.to_ascii_lowercase();
@@ -279,6 +298,15 @@ error_reporting = E_ALL\r\n\
         assert!(ini.disable_extension("curl"));
         assert!(!ini.is_extension_enabled("curl"));
         assert!(ini.to_text().contains("\r\n;extension=curl\r\n"));
+    }
+
+    #[test]
+    fn ordre_de_chargement() {
+        let mut ini = IniFile::parse("extension=exif\nextension=curl\nextension=mbstring\n");
+        assert!(ini.ensure_loaded_before("mbstring", "exif"));
+        assert_eq!(ini.to_text(), "extension=mbstring\nextension=exif\nextension=curl\n");
+        assert!(!ini.ensure_loaded_before("mbstring", "exif"), "déjà dans le bon ordre");
+        assert!(!ini.ensure_loaded_before("absente", "exif"));
     }
 
     #[test]

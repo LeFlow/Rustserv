@@ -82,6 +82,25 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 - Nouvelles versions : `catalog::php_remote` lit releases.json (NTS x64), `Catalog::merge` +
   `save` dans catalog.json. Recherche automatique une fois par session à l'ouverture de la page PHP.
 
+## Extensions PHP (phase 3)
+
+- État (`php::extensions::scan`) = DLL de `ext/` + lignes du php.ini + `php -n -m` (intégrées,
+  non désactivables) + `php -c ini -m` (réellement chargées → détecte « activée mais en erreur »).
+  Alias module/DLL : `gd2` (PHP 7.4) → module `gd`, `oci8_19` → `oci8` (`module_name`, `dll_for`).
+- Toute modification passe par `php::transaction::modify` : sauvegarde dans
+  `etc/php/<v>/backups/` (10 max) → changement → `php -m` → restauration si avertissement.
+- Dépendances et ordre (`DEPENDANCES`) : activer exif active mbstring **avant** ; désactiver une
+  extension requise est refusé (`extension.requise`). Zend : opcache, xdebug.
+- OPcache intégré (PHP ≥ 8.5) : piloté par `opcache.enable`. Activer OPcache règle aussi
+  `opcache.revalidate_freq=0` (code modifié visible immédiatement en dev).
+- PECL : builds officiels `downloads.php.net/~windows/pecl/releases/<ext>/<v>/php_<ext>-<v>-<branche>-nts-<vsXX>-x64.zip`
+  (versions stables, 6 plus récentes examinées). **Pas de SHA256 publié** : HTTPS + empreinte
+  calculée et enregistrée dans `etc/php/<v>/pecl.json` + validation `php -m`. `php_<ext>.dll` → ext/,
+  autres DLL (ImageMagick…) → dossier PHP sans écraser les DLL officielles. Rien pour PHP 8.6 (fin 2026).
+- Profils (`php/profiles.json`) : additifs, plan affiché avant application ; échecs PECL signalés
+  sans bloquer le reste ; une seule transaction php.ini.
+- Après modification, seuls les php-cgi **de cette version** sont relancés, s'ils tournaient.
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
@@ -127,7 +146,14 @@ Tests réels (binaires téléchargés dans `target/pile-test`, ~150 Mo) :
 - [x] Détection des nouvelles versions (windows.php.net/releases.json)
 - Tests réels : `multi_versions_php_par_site`, `mise_a_jour_de_branche_reelle` (dossier `target/pile-maj`)
 
+### Phase 3 — Extensions PHP ✅ (2026-11-22)
+- [x] Scan ext/*.dll + php.ini + php -m : active / inactive / intégrée / en erreur
+- [x] Activer/désactiver (extension= / zend_extension=), sauvegarde, validation, restauration
+- [x] PECL : xdebug, apcu, redis, igbinary, imagick, mongodb, pcov, yaml
+- [x] Dépendances et ordre de chargement, DLL tierces
+- [x] Profils Laravel / Symfony / WordPress avec aperçu
+- Test réel : `extensions_pecl_et_profils_reels` (dossier `target/pile-ext`)
+
 ### Phases suivantes
-- [ ] Phase 3 — Extensions PHP
 - [ ] Phase 4 — Sites, hosts, HTTPS, terminal
 - [ ] Phase 5 — Tests de rétrocompatibilité

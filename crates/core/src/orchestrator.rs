@@ -47,8 +47,8 @@ pub struct GroupView {
 }
 
 pub struct Orchestrator {
-    paths: Paths,
-    supervisor: Arc<Supervisor>,
+    pub(crate) paths: Paths,
+    pub(crate) supervisor: Arc<Supervisor>,
 }
 
 impl Orchestrator {

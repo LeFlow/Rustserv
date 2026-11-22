@@ -40,8 +40,8 @@ pub async fn download_verified(
 
     let mut derniere_erreur = Error::Interne("aucune URL fournie".into());
     for url in urls {
-        match download_one(client, url, dest, &attendu, cancel, on_progress).await {
-            Ok(()) => return Ok(()),
+        match download_one(client, url, dest, Some(&attendu), cancel, on_progress).await {
+            Ok(_) => return Ok(()),
             Err(Error::Annule) => return Err(Error::Annule),
             Err(e) => {
                 tracing::warn!(%url, erreur = %e, "échec, essai de l'URL suivante");
@@ -52,14 +52,32 @@ pub async fn download_verified(
     Err(derniere_erreur)
 }
 
+/// Télécharge une URL **sans empreinte connue à l'avance** (extensions PECL : php.net
+/// ne publie pas de SHA256). Seul HTTPS est accepté ; l'empreinte calculée est
+/// renvoyée pour être enregistrée (traçabilité).
+pub async fn download_unverified(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    cancel: &AtomicBool,
+    on_progress: OnProgress<'_>,
+) -> Result<String> {
+    if !url.starts_with("https://") {
+        return Err(Error::TelechargementEchoue { url: url.into(), detail: "HTTPS obligatoire".into() });
+    }
+    download_one(client, url, dest, None, cancel, on_progress).await
+}
+
+/// Télécharge `url` vers `dest` ; vérifie l'empreinte si `attendu` est fourni.
+/// Renvoie l'empreinte SHA256 calculée.
 async fn download_one(
     client: &reqwest::Client,
     url: &str,
     dest: &Path,
-    attendu: &str,
+    attendu: Option<&str>,
     cancel: &AtomicBool,
     on_progress: OnProgress<'_>,
-) -> Result<()> {
+) -> Result<String> {
     let reseau = |e: reqwest::Error| Error::TelechargementEchoue { url: url.into(), detail: e.to_string() };
 
     tracing::info!(%url, "téléchargement");
@@ -105,16 +123,15 @@ async fn download_one(
     on_progress(recu, total);
 
     let obtenu = hex::encode(hasher.finalize());
-    if obtenu != attendu {
-        let _ = tokio::fs::remove_file(&part).await;
-        return Err(Error::HashInvalide {
-            fichier: file_label(dest),
-            attendu: attendu.into(),
-            obtenu,
-        });
+    if let Some(attendu) = attendu {
+        if obtenu != attendu {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Err(Error::HashInvalide { fichier: file_label(dest), attendu: attendu.into(), obtenu });
+        }
     }
+    let _ = tokio::fs::remove_file(dest).await;
     tokio::fs::rename(&part, dest).await.map_err(|e| Error::fichier(dest, e))?;
-    Ok(())
+    Ok(obtenu)
 }
 
 /// SHA256 d'un fichier existant (lecture dans un thread dédié, sans bloquer l'async).

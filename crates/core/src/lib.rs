@@ -8,6 +8,7 @@
 
 pub mod catalog;
 pub mod error;
+pub mod extensions_ops;
 pub mod orchestrator;
 pub mod paths;
 pub mod php;

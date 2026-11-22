@@ -202,6 +202,101 @@ async fn mise_a_jour_de_branche_reelle() {
     orch.supervisor().stop_all().await;
 }
 
+/// Phase 3 : extensions, dépendances, PECL, profils (dossier `target/pile-ext`).
+#[tokio::test]
+#[ignore]
+async fn extensions_pecl_et_profils_reels() {
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    use rustserv_core::php::extensions::ExtState;
+    use rustserv_core::process::ServiceState;
+
+    let root = racine().with_file_name("pile-ext");
+    let paths = Paths::new(&root);
+    paths.ensure_layout().unwrap();
+    let _ = std::fs::remove_dir_all(paths.etc().join("php")); // php.ini neufs à chaque exécution
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    // Les DLL PECL d'un essai précédent restent dans bin/ : on repart d'une installation propre.
+    for b in ["8.3", "7.4"] {
+        let v = cat.latest("php", Some(b)).unwrap().version.clone();
+        let _ = inst.uninstall("php", &v);
+        installe(&inst, &cat, "php", Some(b)).await;
+    }
+    let settings = Settings::default();
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    let v83 = cat.latest("php", Some("8.3")).unwrap().version.clone();
+    let v74 = cat.latest("php", Some("7.4")).unwrap().version.clone();
+    let etat = |l: &[rustserv_core::php::extensions::ExtensionInfo], n: &str| l.iter().find(|e| e.name == n).map(|e| e.state);
+
+    // 1. Analyse
+    let l = orch.extensions(&inst, &settings, &v83).await.unwrap();
+    let compte = |s| l.iter().filter(|e| e.state == s).count();
+    println!(
+        "PHP {v83} : {} actives, {} inactives, {} intégrées, {} en erreur",
+        compte(ExtState::Active), compte(ExtState::Inactive), compte(ExtState::Integree), compte(ExtState::Erreur)
+    );
+    assert_eq!(etat(&l, "mbstring"), Some(ExtState::Active));
+    assert_eq!(etat(&l, "core"), Some(ExtState::Integree));
+    assert_eq!(compte(ExtState::Erreur), 0);
+
+    // 2. Dépendances : mbstring est requise par exif.
+    let e = orch.set_extension(&inst, &settings, &v83, "mbstring", false).await.unwrap_err();
+    assert_eq!(e.code(), "extension.requise");
+    orch.set_extension(&inst, &settings, &v83, "exif", false).await.unwrap();
+    orch.set_extension(&inst, &settings, &v83, "mbstring", false).await.unwrap();
+    let c = orch.set_extension(&inst, &settings, &v83, "exif", true).await.unwrap();
+    assert!(c.modules.contains(&"mbstring".into()) && c.modules.contains(&"exif".into()), "mbstring réactivée automatiquement");
+
+    // 3. Extension qui exige une bibliothèque absente → refus et php.ini restauré.
+    let ini = rustserv_core::php::php_ini_path(&paths, &v83);
+    let avant = std::fs::read_to_string(&ini).unwrap();
+    let e = orch.set_extension(&inst, &settings, &v83, "pdo_firebird", true).await;
+    println!("pdo_firebird → {:?}", e.as_ref().map(|_| "chargée").map_err(|e| e.code()));
+    if let Err(e) = e {
+        assert_eq!(e.code(), "php.invalide");
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), avant, "php.ini non restauré");
+    }
+
+    // 4. PECL sur 8.3 (avec pool en marche : il doit être relancé).
+    orch.start(Group::Php, &Settings { versions: rustserv_core::settings::Versions { php: Some("8.3".into()), ..Default::default() }, ..Default::default() }, &inst.installed().unwrap())
+        .await
+        .unwrap();
+    let pid_avant = match orch.supervisor().state(&format!("php-{v83}#0")) { ServiceState::EnCours { pid, .. } => pid, s => panic!("{s:?}") };
+    for ext in ["xdebug", "apcu", "redis"] {
+        let r = orch.install_pecl(&inst, &settings, &v83, ext, &AtomicBool::new(false), &|_| {}).await.unwrap_or_else(|e| panic!("{ext} : {e}"));
+        println!("PECL {ext} {} installée : {:?}", r.version, r.files);
+    }
+    let l = orch.extensions(&inst, &settings, &v83).await.unwrap();
+    for ext in ["xdebug", "apcu", "redis"] {
+        let info = l.iter().find(|e| e.name == ext).unwrap();
+        assert_eq!(info.state, ExtState::Active, "{ext} : {:?}", info.erreur);
+        assert!(info.pecl.is_some());
+    }
+    assert!(l.iter().find(|e| e.name == "xdebug").unwrap().zend);
+    let pid_apres = match orch.supervisor().state(&format!("php-{v83}#0")) { ServiceState::EnCours { pid, .. } => pid, s => panic!("{s:?}") };
+    assert_ne!(pid_avant, pid_apres, "le pool PHP aurait dû être relancé");
+
+    // 5. Profil WordPress (imagick depuis PECL).
+    let plan = orch.profile_plan(&inst, &settings, &v83, "wordpress").await.unwrap();
+    println!("plan WordPress : {plan:?}");
+    let r = orch.apply_profile(&inst, &settings, &v83, "wordpress", &AtomicBool::new(false), &|_| {}).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("échecs PECL : {:?}", r.echecs_pecl);
+    assert!(r.echecs_pecl.is_empty());
+    let apres = orch.profile_plan(&inst, &settings, &v83, "wordpress").await.unwrap();
+    assert!(apres.is_empty(), "profil non entièrement appliqué : {apres:?}");
+
+    // 6. PHP 7.4 (compilateur vc15).
+    let l74 = orch.extensions(&inst, &settings, &v74).await.unwrap();
+    let erreurs: Vec<_> = l74.iter().filter(|e| e.state == ExtState::Erreur).map(|e| (&e.name, &e.erreur)).collect();
+    assert!(erreurs.is_empty(), "PHP 7.4 : extensions faussement en erreur {erreurs:?}");
+    assert_eq!(etat(&l74, "gd2"), Some(ExtState::Active), "gd2 (7.4) doit être reconnue via le module gd");
+    let r = orch.install_pecl(&inst, &settings, &v74, "apcu", &AtomicBool::new(false), &|_| {}).await.unwrap_or_else(|e| panic!("7.4 apcu : {e}"));
+    println!("PHP {v74} : apcu {}", r.version);
+    let r = orch.apply_profile(&inst, &settings, &v74, "laravel", &AtomicBool::new(false), &|_| {}).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("Laravel sur 7.4 : {:?} / échecs {:?}", r.plan, r.echecs_pecl);
+    orch.supervisor().stop_all().await;
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

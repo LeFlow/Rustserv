@@ -137,7 +137,67 @@ export interface SiteView {
   local_url: string;
 }
 
+// ------------------------------------------------------------ extensions
+
+export type EtatExtension = "active" | "inactive" | "integree" | "erreur";
+
+export interface ExtensionInfo {
+  name: string;
+  state: EtatExtension;
+  zend: boolean;
+  description: string | null;
+  dependances: string[];
+  requiert: string | null;
+  erreur: string | null;
+  pecl: string | null;
+}
+
+export interface PeclEntry {
+  name: string;
+  description: string | null;
+}
+
+export interface PeclRecord {
+  version: string;
+  url: string;
+  sha256: string;
+  files: string[];
+}
+
+export interface Profile {
+  id: string;
+  nom: string;
+  description: string;
+  extensions: string[];
+  pecl: string[];
+  ini: Record<string, string>;
+}
+
+export interface ProfilePlan {
+  profil: string;
+  deja_ok: string[];
+  a_activer: string[];
+  a_telecharger: string[];
+  reglages: { cle: string; avant: string | null; apres: string }[];
+  indisponibles: string[];
+}
+
+export interface ProfileResult {
+  plan: ProfilePlan;
+  echecs_pecl: [string, ErreurBackend][];
+}
+
 export const api = {
+  phpExtensions: (version: string) => invoke<ExtensionInfo[]>("php_extensions", { version }),
+  phpExtensionSet: (version: string, name: string, enabled: boolean) =>
+    invoke<void>("php_extension_set", { version, name, enabled }),
+  peclList: () => invoke<PeclEntry[]>("php_pecl_list"),
+  peclInstall: (version: string, name: string) => invoke<PeclRecord>("php_pecl_install", { version, name }),
+  profiles: () => invoke<Profile[]>("php_profiles"),
+  profilePlan: (version: string, profile: string) => invoke<ProfilePlan>("php_profile_plan", { version, profile }),
+  profileApply: (version: string, profile: string) => invoke<ProfileResult>("php_profile_apply", { version, profile }),
+  openPath: (path: string) => invoke<void>("open_path", { path }),
+
   phpOverview: () => invoke<PhpView>("php_overview"),
   phpSetDefault: (branch: string) => invoke<void>("php_set_default", { branch }),
   phpPin: (branch: string, version: string | null) => invoke<void>("php_pin", { branch, version }),
