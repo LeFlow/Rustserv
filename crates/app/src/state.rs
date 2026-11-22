@@ -26,6 +26,8 @@ pub struct AppState {
     /// Des réglages ont été enregistrés pendant que des services tournaient :
     /// un redémarrage est nécessaire pour les appliquer.
     pub restart_pending: Mutex<bool>,
+    /// Drapeau d'annulation de l'exécution de compatibilité en cours.
+    pub compat_cancel: Mutex<Arc<AtomicBool>>,
 }
 
 impl AppState {
@@ -60,6 +62,7 @@ impl AppState {
             last_php_check: Mutex::new(None),
             terminals: Default::default(),
             restart_pending: Mutex::new(false),
+            compat_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
         })
     }
 

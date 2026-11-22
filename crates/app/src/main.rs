@@ -89,6 +89,7 @@ fn main() {
             compat_commands::compat_install_framework,
             compat_commands::compat_phpcs,
             compat_commands::compat_phpstan,
+            compat_commands::compat_cancel,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {

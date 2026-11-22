@@ -1,4 +1,5 @@
 //! Commandes de la phase 5 : tests multi-versions et analyses de compatibilité.
+//! Chaque exécution peut être annulée (`compat_cancel`) : les processus sont arrêtés.
 
 use crate::state::AppState;
 use rustserv_core::compat::analysis::Rapport;
@@ -6,7 +7,16 @@ use rustserv_core::compat::ops;
 use rustserv_core::compat::runner::{RunResult, TestKind};
 use rustserv_core::compat::tools::{self, ToolsStatus};
 use rustserv_core::{Error, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::State;
+
+/// Nouveau drapeau d'annulation pour l'exécution qui commence (remplace le précédent).
+fn nouvelle_execution(state: &AppState) -> Result<Arc<AtomicBool>> {
+    let flag = Arc::new(AtomicBool::new(false));
+    *state.compat_cancel.lock().map_err(|e| Error::Interne(e.to_string()))? = flag.clone();
+    Ok(flag)
+}
 
 #[tauri::command]
 pub fn compat_tools_status(state: State<'_, AppState>) -> ToolsStatus {
@@ -29,7 +39,8 @@ pub async fn compat_run(
     script: Option<String>,
     versions: Vec<String>,
 ) -> Result<Vec<RunResult>> {
-    ops::run_tests(&state.paths, &state.settings(), &state.installer, &site, kind, script, &versions).await
+    let flag = nouvelle_execution(&state)?;
+    ops::run_tests(&state.paths, &state.settings(), &state.installer, &site, kind, script, &versions, &flag).await
 }
 
 /// Installe PHPUnit ou Pest dans le projet (compatible avec la plus ancienne version cochée).
@@ -41,10 +52,19 @@ pub async fn compat_install_framework(state: State<'_, AppState>, site: String, 
 
 #[tauri::command]
 pub async fn compat_phpcs(state: State<'_, AppState>, site: String, min: String, max: Option<String>) -> Result<Rapport> {
-    ops::phpcompatibility(&state.paths, &state.settings(), &state.installer, &site, &min, max.as_deref()).await
+    let flag = nouvelle_execution(&state)?;
+    ops::phpcompatibility(&state.paths, &state.settings(), &state.installer, &site, &min, max.as_deref(), &flag).await
 }
 
 #[tauri::command]
 pub async fn compat_phpstan(state: State<'_, AppState>, site: String, niveau: u8, cible: String) -> Result<Rapport> {
-    ops::phpstan(&state.paths, &state.settings(), &state.installer, &site, niveau, &cible).await
+    let flag = nouvelle_execution(&state)?;
+    ops::phpstan(&state.paths, &state.settings(), &state.installer, &site, niveau, &cible, &flag).await
+}
+
+/// Annule l'exécution en cours (tests ou analyse) : ses processus sont arrêtés.
+#[tauri::command]
+pub fn compat_cancel(state: State<'_, AppState>) -> Result<()> {
+    state.compat_cancel.lock().map_err(|e| Error::Interne(e.to_string()))?.store(true, Ordering::Relaxed);
+    Ok(())
 }

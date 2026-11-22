@@ -69,7 +69,7 @@
       if (code === "compat.phpunit_absent" || code === "compat.pest_absent") {
         frameworkAbsent = type;
       } else {
-        erreur = tErreur(e);
+        afficherErreur(e);
       }
     } finally {
       enCours = false;
@@ -99,6 +99,20 @@
     [...versionsChoisies].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))[0] ?? "",
   );
 
+  /** Demande l'arrêt de l'exécution en cours (tests ou analyse). */
+  function annuler() {
+    api.compatCancel();
+  }
+
+  /** Une annulation volontaire s'affiche comme une information, pas comme une erreur. */
+  function afficherErreur(e: unknown) {
+    if ((e as { code?: string })?.code === "annule") {
+      info = t("compat.annule");
+    } else {
+      erreur = tErreur(e);
+    }
+  }
+
   async function installerOutils() {
     erreur = null;
     installation = true;
@@ -112,13 +126,13 @@
   }
 
   async function analyser(outil: "phpcs" | "phpstan") {
-    erreur = null;
+    erreur = info = null;
     rapport = null;
     analyse = outil;
     try {
       rapport = outil === "phpcs" ? await api.compatPhpcs(site, min, max === "" ? null : max) : await api.compatPhpstan(site, niveau, cible);
     } catch (e) {
-      erreur = tErreur(e);
+      afficherErreur(e);
     } finally {
       analyse = null;
     }
@@ -188,6 +202,9 @@
     <button class="primaire" disabled={enCours || !site || versionsChoisies.length === 0 || (type === "script" && !script.trim())} onclick={lancer}>
       {enCours ? t("compat.en_cours", { n: versionsChoisies.length }) : `▶ ${t("compat.lancer", { n: versionsChoisies.length })}`}
     </button>
+    {#if enCours}
+      <button class="danger" onclick={annuler}>■ {t("compat.annuler")}</button>
+    {/if}
     <p class="muted petit">{t(`compat.aide_${type}`)}</p>
   </section>
 
@@ -263,6 +280,7 @@
           </select>
         </label>
         <button class="primaire" disabled={analyse !== null} onclick={() => analyser("phpcs")}>{analyse === "phpcs" ? t("compat.analyse_en_cours") : `🔍 ${t("compat.analyser")}`}</button>
+        {#if analyse === "phpcs"}<button class="danger" onclick={annuler}>■ {t("compat.annuler")}</button>{/if}
       </div>
     </section>
 
@@ -275,6 +293,7 @@
           <select bind:value={niveau}>{#each Array.from({ length: 11 }, (_, i) => i) as n}<option value={n}>{n}{n === 0 ? ` (${t("compat.souple")})` : n === 10 ? ` (${t("compat.strict")})` : ""}</option>{/each}</select>
         </label>
         <button class="primaire" disabled={analyse !== null} onclick={() => analyser("phpstan")}>{analyse === "phpstan" ? t("compat.analyse_en_cours") : `🔍 ${t("compat.analyser")}`}</button>
+        {#if analyse === "phpstan"}<button class="danger" onclick={annuler}>■ {t("compat.annuler")}</button>{/if}
       </div>
     </section>
 
@@ -302,6 +321,7 @@
   .statut.reussi { background: var(--ok); }
   .statut.echec { background: #ca8a04; }
   .statut.erreur, .statut.delai_depasse { background: var(--danger); }
+  .statut.annule { background: var(--muted); }
   .groupe { font-weight: 600; }
   .bandeau { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-card); }
   .info { color: var(--ok); }

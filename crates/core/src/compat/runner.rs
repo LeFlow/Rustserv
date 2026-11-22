@@ -12,6 +12,7 @@ use crate::platform;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 /// Taille maximale de sortie conservée par exécution (la fin est gardée).
@@ -44,6 +45,8 @@ pub enum Statut {
     /// PHP n'a pas pu exécuter le programme (erreur fatale, dépendance manquante…).
     Erreur,
     DelaiDepasse,
+    /// Interrompu à la demande de l'utilisateur.
+    Annule,
 }
 
 /// Résumé tiré du rapport JUnit.
@@ -169,7 +172,7 @@ fn garder_fin(s: String) -> String {
 }
 
 /// Exécute le programme avec une version de PHP.
-pub async fn run_one(php: &InstalledPackage, ini: &Path, spec: &RunSpec, work_dir: &Path) -> RunResult {
+pub async fn run_one(php: &InstalledPackage, ini: &Path, spec: &RunSpec, work_dir: &Path, cancel: &AtomicBool) -> RunResult {
     let debut = Instant::now();
     let resultat = |statut, code, sortie: String, resume| RunResult {
         version: php.version.clone(),
@@ -206,10 +209,11 @@ pub async fn run_one(php: &InstalledPackage, ini: &Path, spec: &RunSpec, work_di
         .kill_on_drop(true);
     cmd.creation_flags(platform::CREATE_NO_WINDOW);
 
-    let sortie = match tokio::time::timeout(spec.timeout, cmd.output()).await {
-        Err(_) => return resultat(Statut::DelaiDepasse, None, format!("délai de {} s dépassé", spec.timeout.as_secs()), None),
-        Ok(Err(e)) => return resultat(Statut::Erreur, None, e.to_string(), None),
-        Ok(Ok(o)) => o,
+    let sortie = match super::ou_annuler(tokio::time::timeout(spec.timeout, cmd.output()), cancel).await {
+        Err(_) => return resultat(Statut::Annule, None, "exécution annulée".into(), None),
+        Ok(Err(_)) => return resultat(Statut::DelaiDepasse, None, format!("délai de {} s dépassé", spec.timeout.as_secs()), None),
+        Ok(Ok(Err(e))) => return resultat(Statut::Erreur, None, e.to_string(), None),
+        Ok(Ok(Ok(o))) => o,
     };
     let mut texte = strip_ansi(&String::from_utf8_lossy(&sortie.stdout));
     let err = strip_ansi(&String::from_utf8_lossy(&sortie.stderr));
@@ -230,8 +234,8 @@ pub async fn run_one(php: &InstalledPackage, ini: &Path, spec: &RunSpec, work_di
 }
 
 /// Exécute sur toutes les versions **en parallèle** ; résultats dans l'ordre des versions.
-pub async fn run_all(phps: &[(InstalledPackage, PathBuf)], spec: &RunSpec, work_dir: &Path) -> Vec<RunResult> {
-    futures_util::future::join_all(phps.iter().map(|(p, ini)| run_one(p, ini, spec, work_dir))).await
+pub async fn run_all(phps: &[(InstalledPackage, PathBuf)], spec: &RunSpec, work_dir: &Path, cancel: &AtomicBool) -> Vec<RunResult> {
+    futures_util::future::join_all(phps.iter().map(|(p, ini)| run_one(p, ini, spec, work_dir, cancel))).await
 }
 
 #[cfg(test)]

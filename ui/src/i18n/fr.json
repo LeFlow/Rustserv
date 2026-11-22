@@ -351,7 +351,8 @@
       "reussi": "Réussi",
       "echec": "Échec",
       "erreur": "Erreur",
-      "delai_depasse": "Délai dépassé"
+      "delai_depasse": "Délai dépassé",
+      "annule": "Annulé"
     },
     "outils": "Outils d'analyse",
     "outils_absents": "PHP_CodeSniffer + PHPCompatibility et PHPStan ne sont pas encore installés (environ 15 Mo, installés par Composer dans le dossier Rustserv).",
@@ -383,7 +384,9 @@
     "framework_composer": "Il sera ajouté comme dépendance de développement (composer.json et dossier vendor/ du site).",
     "framework_installer": "Installer {outil} dans ce projet",
     "framework_installation": "Installation par Composer…",
-    "framework_installe": "{outil} {version} installé dans le projet."
+    "framework_installe": "{outil} {version} installé dans le projet.",
+    "annuler": "Annuler",
+    "annule": "Exécution annulée : les processus ont été arrêtés."
   },
   "import": {
     "ouvrir": "Importer depuis Laragon / WAMP",

@@ -246,7 +246,7 @@ export interface TerminalInfo {
 // ------------------------------------------------------------ compatibilité
 
 export type TypeTest = "phpunit" | "pest" | "script";
-export type StatutTest = "reussi" | "echec" | "erreur" | "delai_depasse";
+export type StatutTest = "reussi" | "echec" | "erreur" | "delai_depasse" | "annule";
 
 export interface RunResult {
   version: string;
@@ -335,6 +335,7 @@ export const api = {
     listen<ProgressionImport>("migration-progress", (e) => cb(e.payload)),
 
   compatToolsStatus: () => invoke<ToolsStatus>("compat_tools_status"),
+  compatCancel: () => invoke<void>("compat_cancel"),
   compatToolsInstall: () => invoke<ToolsStatus>("compat_tools_install"),
   compatRun: (site: string, kind: TypeTest, script: string | null, versions: string[]) =>
     invoke<RunResult[]>("compat_run", { site, kind, script, versions }),

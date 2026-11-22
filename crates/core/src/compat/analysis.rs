@@ -13,6 +13,7 @@ use crate::platform;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -137,7 +138,7 @@ fn extraire_json(sortie: &str) -> Option<&str> {
     (fin > debut).then(|| &sortie[debut..=fin])
 }
 
-async fn run_php(php: &InstalledPackage, ini: &Path, args: Vec<String>, cwd: &Path, outil: &str) -> Result<(Option<i32>, String, String)> {
+async fn run_php(php: &InstalledPackage, ini: &Path, args: Vec<String>, cwd: &Path, outil: &str, cancel: &AtomicBool) -> Result<(Option<i32>, String, String)> {
     let mut cmd = tokio::process::Command::new(php.path.join(platform::exe_name("php")));
     cmd.arg("-c")
         .arg(ini)
@@ -147,8 +148,8 @@ async fn run_php(php: &InstalledPackage, ini: &Path, args: Vec<String>, cwd: &Pa
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     cmd.creation_flags(platform::CREATE_NO_WINDOW);
-    let out = tokio::time::timeout(Duration::from_secs(900), cmd.output())
-        .await
+    let out = super::ou_annuler(tokio::time::timeout(Duration::from_secs(900), cmd.output()), cancel)
+        .await?
         .map_err(|_| Error::CompatEchec { outil: outil.into(), detail: "délai de 15 minutes dépassé".into() })?
         .map_err(|e| Error::CompatEchec { outil: outil.into(), detail: e.to_string() })?;
     Ok((out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned()))
@@ -161,7 +162,8 @@ fn sans_json(outil: &str, stdout: &str, stderr: &str) -> Error {
 }
 
 /// PHPCompatibility : `min`/`max` = branches (« 7.4 », « 8.5 ») ; `max` vide = toutes les suivantes.
-pub async fn phpcompatibility(paths: &Paths, php: &InstalledPackage, ini: &Path, projet: &Path, min: &str, max: Option<&str>) -> Result<Rapport> {
+#[allow(clippy::too_many_arguments)]
+pub async fn phpcompatibility(paths: &Paths, php: &InstalledPackage, ini: &Path, projet: &Path, min: &str, max: Option<&str>, cancel: &AtomicBool) -> Result<Rapport> {
     let cible = match max {
         Some(m) if m != min => format!("{min}-{m}"),
         Some(_) => min.to_string(),
@@ -180,7 +182,7 @@ pub async fn phpcompatibility(paths: &Paths, php: &InstalledPackage, ini: &Path,
         "-q".into(),
         projet.display().to_string(),
     ];
-    let (_, stdout, stderr) = run_php(php, ini, args, projet, "PHPCompatibility").await?;
+    let (_, stdout, stderr) = run_php(php, ini, args, projet, "PHPCompatibility", cancel).await?;
     // Code de sortie 1/2 = problèmes trouvés : normal. Seule l'absence de JSON est une erreur.
     let json = extraire_json(&stdout).ok_or_else(|| sans_json("PHPCompatibility", &stdout, &stderr))?;
     let mut r = parse_phpcs(projet, json, &cible)?;
@@ -210,7 +212,8 @@ pub fn phpstan_neon(paths: &Paths, projet: &Path, niveau: u8, php_cible: &str) -
 }
 
 /// PHPStan au niveau donné (0 à 10), pour la version de PHP cible (« 8.3 »).
-pub async fn phpstan(paths: &Paths, php: &InstalledPackage, ini: &Path, projet: &Path, niveau: u8, php_cible: &str) -> Result<Rapport> {
+#[allow(clippy::too_many_arguments)]
+pub async fn phpstan(paths: &Paths, php: &InstalledPackage, ini: &Path, projet: &Path, niveau: u8, php_cible: &str, cancel: &AtomicBool) -> Result<Rapport> {
     let conf = paths.tmp().join("phpstan").join("rustserv.neon");
     std::fs::create_dir_all(conf.parent().unwrap()).map_err(|e| Error::fichier(&conf, e))?;
     std::fs::write(&conf, phpstan_neon(paths, projet, niveau, php_cible)).map_err(|e| Error::fichier(&conf, e))?;
@@ -225,7 +228,7 @@ pub async fn phpstan(paths: &Paths, php: &InstalledPackage, ini: &Path, projet: 
         "--no-ansi".into(),
         "--memory-limit=1G".into(),
     ];
-    let (_, stdout, stderr) = run_php(php, ini, args, projet, "PHPStan").await?;
+    let (_, stdout, stderr) = run_php(php, ini, args, projet, "PHPStan", cancel).await?;
     let json = extraire_json(&stdout).ok_or_else(|| sans_json("PHPStan", &stdout, &stderr))?;
     let mut r = parse_phpstan(projet, json, &format!("PHP {php_cible}, niveau {niveau}"))?;
     r.duree_ms = debut.elapsed().as_millis() as u64;

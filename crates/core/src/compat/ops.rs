@@ -123,6 +123,7 @@ pub async fn run_tests(
     kind: TestKind,
     script: Option<String>,
     versions: &[String],
+    cancel: &AtomicBool,
 ) -> Result<Vec<RunResult>> {
     let project = site_dir(paths, settings, site)?;
     let installed = installer.installed()?;
@@ -140,7 +141,11 @@ pub async fn run_tests(
     let spec = RunSpec { project, kind, script, args: vec![], timeout: Duration::from_secs(600) };
     // Vérification immédiate (message clair plutôt qu'une erreur par version).
     runner::entry_point(&spec)?;
-    Ok(runner::run_all(&phps, &spec, &paths.tmp().join("compat")).await)
+    let r = runner::run_all(&phps, &spec, &paths.tmp().join("compat"), cancel).await;
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(Error::Annule);
+    }
+    Ok(r)
 }
 
 fn outils_prets(paths: &Paths) -> Result<()> {
@@ -151,16 +156,18 @@ fn outils_prets(paths: &Paths) -> Result<()> {
     }
 }
 
-pub async fn phpcompatibility(paths: &Paths, settings: &Settings, installer: &Installer, site: &str, min: &str, max: Option<&str>) -> Result<Rapport> {
+#[allow(clippy::too_many_arguments)]
+pub async fn phpcompatibility(paths: &Paths, settings: &Settings, installer: &Installer, site: &str, min: &str, max: Option<&str>, cancel: &AtomicBool) -> Result<Rapport> {
     outils_prets(paths)?;
     let projet = site_dir(paths, settings, site)?;
     let (php, ini) = php_outils(paths, settings, installer)?;
-    analysis::phpcompatibility(paths, &php, &ini, &projet, min, max).await
+    analysis::phpcompatibility(paths, &php, &ini, &projet, min, max, cancel).await
 }
 
-pub async fn phpstan(paths: &Paths, settings: &Settings, installer: &Installer, site: &str, niveau: u8, cible: &str) -> Result<Rapport> {
+#[allow(clippy::too_many_arguments)]
+pub async fn phpstan(paths: &Paths, settings: &Settings, installer: &Installer, site: &str, niveau: u8, cible: &str, cancel: &AtomicBool) -> Result<Rapport> {
     outils_prets(paths)?;
     let projet = site_dir(paths, settings, site)?;
     let (php, ini) = php_outils(paths, settings, installer)?;
-    analysis::phpstan(paths, &php, &ini, &projet, niveau, cible).await
+    analysis::phpstan(paths, &php, &ini, &projet, niveau, cible, cancel).await
 }

@@ -476,7 +476,7 @@ async fn retrocompatibilite_reelle() {
     assert!(st.installes);
 
     // 2. Script : str_contains existe en 8.x, pas en 7.4.
-    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Script, Some("script.php".into()), &[v83.clone(), v74.clone()]).await.unwrap();
+    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Script, Some("script.php".into()), &[v83.clone(), v74.clone()], &AtomicBool::new(false)).await.unwrap();
     for x in &r {
         println!("script PHP {} → {:?} ({} ms) : {}", x.version, x.statut, x.duree_ms, x.sortie.lines().find(|l| !l.trim().is_empty()).unwrap_or(""));
     }
@@ -498,7 +498,7 @@ async fn retrocompatibilite_reelle() {
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     }
-    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Phpunit, None, &[v74.clone(), v83.clone()]).await.unwrap();
+    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Phpunit, None, &[v74.clone(), v83.clone()], &AtomicBool::new(false)).await.unwrap();
     for x in &r {
         println!("PHPUnit PHP {} → {:?} {:?}", x.version, x.statut, x.resume);
     }
@@ -508,7 +508,7 @@ async fn retrocompatibilite_reelle() {
     assert_eq!(r[1].resume.as_ref().map(|s| s.tests), Some(2));
 
     // 4. PHPCompatibility : du code PHP 7.4 vers PHP 8.x (vendor ignoré).
-    let rap = ops::phpcompatibility(&paths, &settings, &inst, "historique", "7.4", None).await.unwrap_or_else(|e| panic!("{e}"));
+    let rap = ops::phpcompatibility(&paths, &settings, &inst, "historique", "7.4", None, &AtomicBool::new(false)).await.unwrap_or_else(|e| panic!("{e}"));
     println!("PHPCompatibility {} : {} erreur(s), {} avertissement(s), {} ms", rap.cible, rap.erreurs, rap.avertissements, rap.duree_ms);
     for f in &rap.fichiers {
         for m in &f.messages {
@@ -521,7 +521,7 @@ async fn retrocompatibilite_reelle() {
     assert!(legacy.messages.iter().any(|m| m.message.contains("utf8_encode")));
 
     // 5. PHPStan niveau 5 pour PHP 8.3.
-    let rap = ops::phpstan(&paths, &settings, &inst, "historique", 5, "8.3").await.unwrap_or_else(|e| panic!("{e}"));
+    let rap = ops::phpstan(&paths, &settings, &inst, "historique", 5, "8.3", &AtomicBool::new(false)).await.unwrap_or_else(|e| panic!("{e}"));
     println!("PHPStan {} : {} erreur(s), {} ms", rap.cible, rap.erreurs, rap.duree_ms);
     for f in &rap.fichiers {
         for m in &f.messages {
@@ -552,12 +552,12 @@ async fn installation_phpunit_et_pest() {
     std::fs::create_dir_all(site.join("tests")).unwrap();
     std::fs::write(site.join("tests/SommeTest.php"), "<?php\nuse PHPUnit\\Framework\\TestCase;\nfinal class SommeTest extends TestCase {\n    public function testSomme(): void { $this->assertSame(4, 2 + 2); }\n}\n").unwrap();
     let versions = vec![v74.clone(), v83.clone()];
-    let assert_absent = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions).await.unwrap_err();
+    let assert_absent = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions, &AtomicBool::new(false)).await.unwrap_err();
     assert_eq!(assert_absent.code(), "compat.phpunit_absent");
     let v = ops::install_test_framework(&paths, &settings, &inst, &cat, "neuf-phpunit", TestKind::Phpunit, &versions).await.unwrap_or_else(|e| panic!("{e}"));
     println!("PHPUnit installé : {v}");
     assert!(v.starts_with("9."), "PHPUnit compatible PHP 7.4 attendu, obtenu {v}");
-    let r = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions).await.unwrap();
+    let r = ops::run_tests(&paths, &settings, &inst, "neuf-phpunit", TestKind::Phpunit, None, &versions, &AtomicBool::new(false)).await.unwrap();
     for x in &r {
         println!("  PHPUnit PHP {} → {:?} {:?}", x.version, x.statut, x.resume);
         assert_eq!(x.statut, Statut::Reussi, "{}", x.sortie);
@@ -570,7 +570,7 @@ async fn installation_phpunit_et_pest() {
     std::fs::write(site.join("tests/SommeTest.php"), "<?php\ntest('somme', function () {\n    expect(2 + 2)->toBe(4);\n});\n").unwrap();
     let v = ops::install_test_framework(&paths, &settings, &inst, &cat, "neuf-pest", TestKind::Pest, &[v83.clone()]).await.unwrap_or_else(|e| panic!("{e}"));
     println!("Pest installé : {v}");
-    let r = ops::run_tests(&paths, &settings, &inst, "neuf-pest", TestKind::Pest, None, &[v83.clone()]).await.unwrap();
+    let r = ops::run_tests(&paths, &settings, &inst, "neuf-pest", TestKind::Pest, None, &[v83.clone()], &AtomicBool::new(false)).await.unwrap();
     println!("  Pest PHP {} → {:?} {:?}", r[0].version, r[0].statut, r[0].resume);
     assert_eq!(r[0].statut, Statut::Reussi, "{}", r[0].sortie);
     assert_eq!(r[0].resume.as_ref().map(|s| s.tests), Some(1));
@@ -823,6 +823,42 @@ define( 'DB_HOST', '127.0.0.1' );
     println!("PHP → {}", String::from_utf8_lossy(&o.stdout));
     assert!(String::from_utf8_lossy(&o.stdout).contains("11.4."));
     orch.supervisor().stop_all().await;
+}
+
+/// Annulation réelle : un script PHP de 30 s est interrompu, et le processus est tué.
+#[tokio::test]
+#[ignore]
+async fn annulation_d_un_test_en_cours() {
+    use rustserv_core::compat::{ops, runner::TestKind};
+    use std::sync::Arc;
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    let v83 = cat.latest("php", Some("8.3")).unwrap().version.clone();
+    let site = paths.www().join("lent");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join("lent.php"), "<?php sleep(30); echo 'fini';").unwrap();
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let f2 = flag.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        f2.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+    let debut = std::time::Instant::now();
+    let r = ops::run_tests(&paths, &Settings::default(), &inst, "lent", TestKind::Script, Some("lent.php".into()), &[v83], &flag).await;
+    println!("annulé après {:.1?} : {:?}", debut.elapsed(), r.as_ref().map(|_| "terminé").map_err(|e| e.code()));
+    assert_eq!(r.unwrap_err().code(), "annule");
+    assert!(debut.elapsed() < std::time::Duration::from_secs(5), "annulation trop lente");
+    // Le processus PHP doit avoir été tué.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let o = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", "(Get-CimInstance Win32_Process -Filter \"Name='php.exe'\" | Where-Object { $_.CommandLine -like '*lent.php*' }).Count"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "0", "php.exe toujours en cours");
 }
 
 fn libre() -> u16 {
