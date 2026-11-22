@@ -11,7 +11,8 @@
     "sites": "Sites",
     "catalogue": "Catalogue",
     "parametres": "Paramètres",
-    "terminal": "Terminal"
+    "terminal": "Terminal",
+    "compat": "Compatibilité"
   },
   "pages": {
     "bientot": "Cette section arrive dans une prochaine étape."
@@ -263,7 +264,13 @@
     "ssl": {
       "erreur": "Erreur HTTPS : {detail}"
     },
-    "interne": "Erreur interne de Rustserv : {detail}"
+    "interne": "Erreur interne de Rustserv : {detail}",
+    "compat": {
+      "introuvable": "Le script « {quoi} » est introuvable dans le dossier du site (le chemin doit être relatif au site, sans « .. »).",
+      "phpunit_absent": "PHPUnit n'est pas installé dans ce projet. Dans le terminal du site, lancez : composer require --dev phpunit/phpunit",
+      "pest_absent": "Pest n'est pas installé dans ce projet. Dans le terminal du site, lancez : composer require --dev pestphp/pest",
+      "echec": "{outil} a échoué :\n{detail}"
+    }
   },
   "terminal": {
     "nouveau": "Nouveau terminal",
@@ -274,5 +281,63 @@
     "termine": "[terminal fermé]",
     "entete": "{dossier}",
     "entete_php": "{dossier} — PHP {php}"
+  },
+  "compat": {
+    "site": "Site",
+    "onglet_tests": "Tests multi-versions",
+    "onglet_analyse": "Analyse de code",
+    "type": "Que lancer ?",
+    "script": "Script PHP",
+    "fichier": "Fichier (relatif au site)",
+    "versions": "Versions de PHP :",
+    "lancer": "Lancer sur {n} version(s)",
+    "en_cours": "Exécution sur {n} version(s)…",
+    "aide_phpunit": "Lance PHPUnit du projet (vendor/) sur chaque version, en parallèle. Sans phpunit.xml, le dossier tests/ est utilisé.",
+    "aide_pest": "Lance Pest du projet (vendor/) sur chaque version, en parallèle.",
+    "aide_script": "Exécute le script avec chaque version et compare les sorties : idéal pour repérer un changement de comportement.",
+    "col_statut": "Résultat",
+    "col_duree": "Durée",
+    "col_tests": "Tests",
+    "col_sortie": "Sortie",
+    "resume": "{tests} tests, {assertions} assertions",
+    "echecs": "{n} échec(s)",
+    "erreurs": "{n} erreur(s)",
+    "ignores": "{n} ignoré(s)",
+    "sortie_groupe": "Sortie {lettre}",
+    "sorties_identiques": "✓ La sortie est identique sur toutes les versions.",
+    "sorties_differentes": "⚠ {n} sorties différentes selon la version de PHP : comparez-les avec « Voir la sortie ».",
+    "voir_sortie": "Voir la sortie",
+    "masquer_sortie": "Masquer",
+    "statut": {
+      "reussi": "Réussi",
+      "echec": "Échec",
+      "erreur": "Erreur",
+      "delai_depasse": "Délai dépassé"
+    },
+    "outils": "Outils d'analyse",
+    "outils_absents": "PHP_CodeSniffer + PHPCompatibility et PHPStan ne sont pas encore installés (environ 15 Mo, installés par Composer dans le dossier Rustserv).",
+    "installer_outils": "Installer les outils",
+    "installation": "Installation en cours…",
+    "mettre_a_jour": "Mettre à jour",
+    "alpha": "PHPCompatibility 10 est encore en version alpha : c'est la seule qui connaît PHP 8 (la version stable date de 2019). Ses résultats sont fiables mais la liste des règles évolue encore.",
+    "phpcs_aide": "Signale les fonctions, syntaxes et extensions supprimées ou dépréciées pour les versions de PHP choisies (vendor/ et node_modules/ sont ignorés).",
+    "de": "De",
+    "a": "À",
+    "toutes_suivantes": "toutes les suivantes",
+    "phpstan_aide": "Analyse les types et les appels (fonctions inexistantes, arguments incorrects…) comme si le code tournait sur la version cible.",
+    "version_cible": "Version cible",
+    "niveau": "Niveau de rigueur",
+    "souple": "souple",
+    "strict": "très strict",
+    "analyser": "Analyser",
+    "analyse_en_cours": "Analyse en cours…",
+    "aucun_probleme": "{outil} : aucun problème détecté ({cible}).",
+    "n_erreurs": "{n} erreur(s)",
+    "n_avertissements": "{n} avertissement(s)",
+    "n_fichiers": "dans {n} fichier(s)",
+    "gravite": {
+      "erreur": "erreur",
+      "avertissement": "avertissement"
+    }
   }
 }

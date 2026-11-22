@@ -439,6 +439,98 @@ async fn terminal_avec_le_php_du_site() {
     assert!(*fini.lock().unwrap(), "le terminal ne s'est pas fermé");
 }
 
+/// Phase 5 : tests multi-versions et analyses de compatibilité sur un projet « historique ».
+#[tokio::test]
+#[ignore]
+async fn retrocompatibilite_reelle() {
+    use rustserv_core::compat::{analysis::Gravite, ops, runner::{Statut, TestKind}, tools};
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    installe(&inst, &cat, "php", Some("7.4")).await;
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    let settings = Settings::default();
+    let v74 = cat.latest("php", Some("7.4")).unwrap().version.clone();
+    let v83 = cat.latest("php", Some("8.3")).unwrap().version.clone();
+
+    // Projet de test.
+    let site = paths.www().join("historique");
+    std::fs::create_dir_all(site.join("tests")).unwrap();
+    std::fs::write(
+        site.join("legacy.php"),
+        "<?php\n$a = ['x' => 1];\nwhile (list($k, $v) = each($a)) {\n    echo \"$k=$v\\n\";\n}\necho utf8_encode('e'), \"\\n\";\n",
+    )
+    .unwrap();
+    std::fs::write(site.join("script.php"), "<?php\necho str_contains('abc', 'b') ? 'oui' : 'non';\n").unwrap();
+    std::fs::write(
+        site.join("tests/ExempleTest.php"),
+        "<?php\nuse PHPUnit\\Framework\\TestCase;\nfinal class ExempleTest extends TestCase {\n    public function testAddition(): void { $this->assertSame(4, 2 + 2); }\n    public function testStrContains(): void { $this->assertTrue(str_contains('abc', 'b')); }\n}\n",
+    )
+    .unwrap();
+
+    // 1. Outils (installe aussi Composer).
+    let t0 = std::time::Instant::now();
+    let st = if tools::status(&paths).installes { tools::status(&paths) } else { ops::install_tools(&paths, &settings, &inst, &cat).await.unwrap_or_else(|e| panic!("{e}")) };
+    println!("outils ({:.0?}) : phpcs {:?}, PHPCompatibility {:?}, PHPStan {:?}", t0.elapsed(), st.phpcs, st.phpcompatibility, st.phpstan);
+    assert!(st.installes);
+
+    // 2. Script : str_contains existe en 8.x, pas en 7.4.
+    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Script, Some("script.php".into()), &[v83.clone(), v74.clone()]).await.unwrap();
+    for x in &r {
+        println!("script PHP {} → {:?} ({} ms) : {}", x.version, x.statut, x.duree_ms, x.sortie.lines().find(|l| !l.trim().is_empty()).unwrap_or(""));
+    }
+    assert_eq!(r[0].version, v74, "résultats triés par version");
+    assert_eq!(r[0].statut, Statut::Erreur);
+    assert_eq!((r[1].statut, r[1].sortie.trim()), (Statut::Reussi, "oui"));
+
+    // 3. PHPUnit 9.6 (compatible 7.4 → 8.x) installé dans le projet avec Composer.
+    if !site.join("vendor/phpunit/phpunit/phpunit").is_file() {
+        let php74 = inst.installed().unwrap().into_iter().find(|p| p.version == v74).unwrap();
+        let ini = rustserv_core::php::ensure_php_ini(&paths, &php74.path, &php74.version, &settings).unwrap();
+        let composer = inst.installed().unwrap().into_iter().find(|p| p.package == "composer").unwrap();
+        let out = std::process::Command::new(php74.path.join("php.exe"))
+            .arg("-c").arg(&ini).arg(composer.path.join("composer.phar"))
+            .args(["require", "--dev", "phpunit/phpunit:^9.6", "--no-interaction", "--no-progress"])
+            .current_dir(&site)
+            .env("COMPOSER_HOME", paths.tmp().join("composer"))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let r = ops::run_tests(&paths, &settings, &inst, "historique", TestKind::Phpunit, None, &[v74.clone(), v83.clone()]).await.unwrap();
+    for x in &r {
+        println!("PHPUnit PHP {} → {:?} {:?}", x.version, x.statut, x.resume);
+    }
+    assert_eq!(r[0].statut, Statut::Echec);
+    assert_eq!(r[0].resume.as_ref().map(|s| (s.tests, s.erreurs)), Some((2, 1)));
+    assert_eq!(r[1].statut, Statut::Reussi);
+    assert_eq!(r[1].resume.as_ref().map(|s| s.tests), Some(2));
+
+    // 4. PHPCompatibility : du code PHP 7.4 vers PHP 8.x (vendor ignoré).
+    let rap = ops::phpcompatibility(&paths, &settings, &inst, "historique", "7.4", None).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("PHPCompatibility {} : {} erreur(s), {} avertissement(s), {} ms", rap.cible, rap.erreurs, rap.avertissements, rap.duree_ms);
+    for f in &rap.fichiers {
+        for m in &f.messages {
+            println!("  {}:{} [{:?}] {}", f.chemin, m.ligne, m.gravite, m.message);
+        }
+    }
+    assert!(rap.fichiers.iter().all(|f| !f.chemin.starts_with("vendor/")), "vendor doit être ignoré");
+    let legacy = rap.fichiers.iter().find(|f| f.chemin == "legacy.php").expect("legacy.php non signalé");
+    assert!(legacy.messages.iter().any(|m| m.gravite == Gravite::Erreur && m.message.contains("each")));
+    assert!(legacy.messages.iter().any(|m| m.message.contains("utf8_encode")));
+
+    // 5. PHPStan niveau 5 pour PHP 8.3.
+    let rap = ops::phpstan(&paths, &settings, &inst, "historique", 5, "8.3").await.unwrap_or_else(|e| panic!("{e}"));
+    println!("PHPStan {} : {} erreur(s), {} ms", rap.cible, rap.erreurs, rap.duree_ms);
+    for f in &rap.fichiers {
+        for m in &f.messages {
+            println!("  {}:{} {}", f.chemin, m.ligne, m.message);
+        }
+    }
+    assert!(rap.fichiers.iter().any(|f| f.chemin == "legacy.php" && f.messages.iter().any(|m| m.message.contains("each"))));
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

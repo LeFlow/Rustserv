@@ -223,7 +223,53 @@ export interface TerminalInfo {
   php: string | null;
 }
 
+// ------------------------------------------------------------ compatibilité
+
+export type TypeTest = "phpunit" | "pest" | "script";
+export type StatutTest = "reussi" | "echec" | "erreur" | "delai_depasse";
+
+export interface RunResult {
+  version: string;
+  statut: StatutTest;
+  code: number | null;
+  duree_ms: number;
+  sortie: string;
+  resume: { tests: number; assertions: number; echecs: number; erreurs: number; ignores: number } | null;
+  empreinte: string;
+}
+
+export interface ToolsStatus {
+  installes: boolean;
+  phpcs: string | null;
+  phpcompatibility: string | null;
+  phpstan: string | null;
+}
+
+export interface RapportMessage {
+  ligne: number;
+  gravite: "erreur" | "avertissement";
+  message: string;
+  regle: string | null;
+}
+
+export interface Rapport {
+  outil: string;
+  cible: string;
+  erreurs: number;
+  avertissements: number;
+  fichiers: { chemin: string; messages: RapportMessage[] }[];
+  general: string[];
+  duree_ms: number;
+}
+
 export const api = {
+  compatToolsStatus: () => invoke<ToolsStatus>("compat_tools_status"),
+  compatToolsInstall: () => invoke<ToolsStatus>("compat_tools_install"),
+  compatRun: (site: string, kind: TypeTest, script: string | null, versions: string[]) =>
+    invoke<RunResult[]>("compat_run", { site, kind, script, versions }),
+  compatPhpcs: (site: string, min: string, max: string | null) => invoke<Rapport>("compat_phpcs", { site, min, max }),
+  compatPhpstan: (site: string, niveau: number, cible: string) => invoke<Rapport>("compat_phpstan", { site, niveau, cible }),
+
   hostsStatus: () => invoke<HostsStatus>("hosts_status"),
   hostsSync: () => invoke<HostsStatus>("hosts_sync"),
   sitesRefresh: () => invoke<void>("sites_refresh"),

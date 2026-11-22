@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod compat_commands;
 mod ext_commands;
 mod php_commands;
 mod site_commands;
@@ -72,6 +73,11 @@ fn main() {
             site_commands::terminal_write,
             site_commands::terminal_resize,
             site_commands::terminal_close,
+            compat_commands::compat_tools_status,
+            compat_commands::compat_tools_install,
+            compat_commands::compat_run,
+            compat_commands::compat_phpcs,
+            compat_commands::compat_phpstan,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {

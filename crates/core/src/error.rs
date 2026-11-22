@@ -83,6 +83,14 @@ pub enum Error {
     #[error("HTTPS : {detail}")]
     Ssl { detail: String },
 
+    /// Programme de test introuvable (PHPUnit/Pest non installés dans le projet, script absent).
+    #[error("{quoi} introuvable ({aide})")]
+    CompatIntrouvable { quoi: String, aide: String },
+
+    /// Un outil d'analyse a échoué ou renvoyé un résultat illisible.
+    #[error("{outil} a échoué : {detail}")]
+    CompatEchec { outil: String, detail: String },
+
     /// Réglages incohérents (ports en double…).
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
@@ -186,6 +194,12 @@ impl Error {
             Error::AdminRefuse { .. } => "admin.refuse",
             Error::HostsEchec { .. } => "hosts.echec",
             Error::Ssl { .. } => "ssl.erreur",
+            Error::CompatIntrouvable { aide, .. } => match aide.as_str() {
+                "phpunit" => "compat.phpunit_absent",
+                "pest" => "compat.pest_absent",
+                _ => "compat.introuvable",
+            },
+            Error::CompatEchec { .. } => "compat.echec",
             Error::Fichier { .. } => "fichier.acces",
             Error::Io(_) => "io.generique",
             Error::JsonInvalide { .. } => "json.invalide",
@@ -237,6 +251,8 @@ impl Error {
             Error::ProfilInconnu { profil } => json!({ "profil": profil }),
             Error::AdminRefuse { operation } => json!({ "operation": operation }),
             Error::HostsEchec { detail } | Error::Ssl { detail } => json!({ "detail": detail }),
+            Error::CompatIntrouvable { quoi, aide } => json!({ "quoi": quoi, "aide": aide }),
+            Error::CompatEchec { outil, detail } => json!({ "outil": outil, "detail": detail }),
             Error::VcRuntime { requis, installe } => json!({
                 "requis": requis,
                 "installe": installe.clone().unwrap_or_else(|| "aucun".into()),
@@ -324,6 +340,10 @@ mod tests {
             Error::AdminRefuse { operation: s() },
             Error::HostsEchec { detail: s() },
             Error::Ssl { detail: s() },
+            Error::CompatIntrouvable { quoi: s(), aide: "script".into() },
+            Error::CompatIntrouvable { quoi: s(), aide: "phpunit".into() },
+            Error::CompatIntrouvable { quoi: s(), aide: "pest".into() },
+            Error::CompatEchec { outil: s(), detail: s() },
             Error::fichier("x", std::io::Error::other("x")),
             Error::Io(std::io::Error::other("x")),
             Error::JsonInvalide { fichier: s(), detail: s() },

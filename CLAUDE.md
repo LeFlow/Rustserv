@@ -123,6 +123,22 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 - **Composer** : entrée catalogue `file: "composer.phar"` (fichier unique, pas d'archive) ; un `.phar`
   reçoit un lanceur `<nom>.bat` (`@php "%~dp0composer.phar" %*`).
 
+## Rétrocompatibilité (phase 5, `compat/`)
+
+- `runner` : PHPUnit (`vendor/phpunit/phpunit/phpunit`), Pest (`vendor/pestphp/pest/bin/pest`) ou
+  script (relatif au site, `..` interdit) lancés **en parallèle** avec `php.exe -c <ini>` de chaque
+  version. `--log-junit` → résumé (tests, assertions, échecs, erreurs). Sans phpunit.xml ni argument,
+  `tests/` est passé (sinon PHPUnit affiche son aide, code 2). Script : sorties comparées par empreinte.
+  Statut : code 0 = réussi ; tests exécutés + code ≠ 0 = échec ; sinon erreur. Sortie : 256 Ko max (fin).
+- `tools` : Composer installe dans `<racine>/tools/` (COMPOSER_HOME = tmp/composer, portable) :
+  PHP_CodeSniffer ^4, **PHPCompatibility ^10.0@alpha** (la 9.3.5 stable de 2019 ignore PHP 8),
+  PHPStan ^2.1, plugin dealerdirect. Composer installé depuis le catalogue s'il manque.
+  Les outils tournent avec le PHP installé le plus récent.
+- `analysis` : phpcs `--standard=PHPCompatibility --runtime-set testVersion 7.4-8.5 --report=json`
+  (vendor, node_modules, storage, var/cache ignorés) ; PHPStan avec une config neon temporaire
+  (`phpVersion` 80300, `excludePaths.analyse` + `scanDirectories` vendor). JSON extrait entre le premier
+  `{` et le dernier `}` (des avertissements peuvent précéder). Rapport commun `Rapport`.
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
@@ -186,5 +202,14 @@ Tests réels (binaires téléchargés dans `target/pile-test`, ~150 Mo) :
 - Option non faite : DNS local + règle NRPT (le fichier hosts suffit).
 - Tests réels : `https_nginx_et_apache` (`target/pile-https`), `terminal_avec_le_php_du_site`
 
-### Phases suivantes
-- [ ] Phase 5 — Tests de rétrocompatibilité
+### Phase 5 — Tests de rétrocompatibilité ✅ (2026-11-22)
+- [x] Script / PHPUnit / Pest sur plusieurs versions en parallèle, tableau comparatif
+- [x] PHPCompatibility (PHP_CodeSniffer) et PHPStan, rapports par fichier
+- Test réel : `retrocompatibilite_reelle` (projet « historique » dans `target/pile-test`)
+- Non fait : annulation d'une analyse en cours (délais max : tests 10 min, analyses 15 min)
+
+### Pistes pour la suite
+- Proposer la mise à jour du catalogue intégré quand il est plus récent que catalog.json
+- Boîte de dialogue native si l'app ne peut pas démarrer (aujourd'hui : message console)
+- Annulation des analyses ; DNS local + NRPT (sous-domaines sans fichier hosts)
+- Les tests réels partagent `target/pile-test` : les lancer avec `--test-threads=1`, machine peu chargée

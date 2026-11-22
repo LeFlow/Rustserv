@@ -9,14 +9,15 @@
   import { t, tErreur } from "./i18n";
   import { api, type AppInfo } from "./lib/api";
   import Catalogue from "./pages/Catalogue.svelte";
+  import Compat from "./pages/Compat.svelte";
   import Parametres from "./pages/Parametres.svelte";
   import Php from "./pages/Php.svelte";
   import Services from "./pages/Services.svelte";
   import Sites from "./pages/Sites.svelte";
   import Terminal from "./pages/Terminal.svelte";
 
-  type Page = "services" | "php" | "sites" | "terminal" | "catalogue" | "parametres";
-  const pages: Page[] = ["services", "php", "sites", "terminal", "catalogue", "parametres"];
+  type Page = "services" | "php" | "sites" | "terminal" | "compat" | "catalogue" | "parametres";
+  const pages: Page[] = ["services", "php", "sites", "terminal", "compat", "catalogue", "parametres"];
 
   let page = $state<Page>("services");
   let info = $state<AppInfo | null>(null);
@@ -45,6 +46,8 @@
       <Php allerAuCatalogue={() => (page = "catalogue")} />
     {:else if page === "sites"}
       <Sites allerAuTerminal={() => (page = "terminal")} />
+    {:else if page === "compat"}
+      <Compat />
     {:else if page === "catalogue"}
       <Catalogue />
     {:else if page === "parametres"}
