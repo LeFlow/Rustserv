@@ -10,6 +10,7 @@
   import { t, tErreur } from "../i18n";
   import { api, type HostsStatus, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
   import { nouveauTerminal } from "../lib/terminaux.svelte";
+  import Import from "./Import.svelte";
 
   let { allerAuTerminal }: { allerAuTerminal: () => void } = $props();
 
@@ -22,6 +23,7 @@
   let erreur = $state<string | null>(null);
   let info = $state<string | null>(null);
   let occupe = $state<Record<string, boolean>>({});
+  let importOuvert = $state(false);
 
   async function charger() {
     try {
@@ -68,8 +70,13 @@
 
 <div class="barre">
   <button disabled={occupe.refresh} onclick={() => executer("refresh", async () => { await api.sitesRefresh(); return t("sites.actualise"); })}>⟳ {t("sites.actualiser")}</button>
+  <button onclick={() => (importOuvert = true)}>⬇ {t("import.ouvrir")}</button>
   <span class="muted petit">{t("sites.aide")}</span>
 </div>
+
+{#if importOuvert}
+  <Import fermer={() => (importOuvert = false)} termine={charger} />
+{/if}
 
 {#if erreur}<pre class="erreur">{erreur}</pre>{/if}
 {#if info}<p class="info">{info}</p>{/if}

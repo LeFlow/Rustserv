@@ -11,6 +11,7 @@ pub mod compat;
 pub mod error;
 pub mod extensions_ops;
 pub mod hosts;
+pub mod migration;
 pub mod orchestrator;
 pub mod paths;
 pub mod php;

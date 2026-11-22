@@ -262,7 +262,56 @@ export interface Rapport {
   duree_ms: number;
 }
 
+// ------------------------------------------------------------ import Laragon / WAMP
+
+export type SourceKind = "laragon" | "wamp";
+export type TypeSite = "wordpress" | "laravel" | "autre";
+
+export interface Detection {
+  sources: { kind: SourceKind; root: string; php: string | null; serveurs: { label: string; bases: string[] }[] }[];
+  sites: {
+    source: SourceKind;
+    nom: string;
+    dossier: string;
+    type_site: TypeSite;
+    base: string | null;
+    base_trouvee: boolean;
+    nom_propose: string;
+  }[];
+  existants: string[];
+}
+
+export interface ImportItem {
+  source: SourceKind;
+  dossier: string;
+  nom: string;
+  type_site: TypeSite;
+  base: string | null;
+  php: string | null;
+  convertir_url: boolean;
+}
+
+export interface ResultatImport {
+  nom: string;
+  ok: boolean;
+  erreur: ErreurBackend | null;
+  base: string | null;
+  ancienne_url: string | null;
+  nouvelle_url: string | null;
+}
+
+export interface ProgressionImport {
+  site: string;
+  etape: "preparation" | "export" | "copie" | "import" | "configuration" | "adresses" | "termine" | "erreur";
+  detail: string;
+}
+
 export const api = {
+  migrationDetect: () => invoke<Detection>("migration_detect"),
+  migrationRun: (items: ImportItem[]) => invoke<ResultatImport[]>("migration_run", { items }),
+  onMigration: (cb: (p: ProgressionImport) => void): Promise<UnlistenFn> =>
+    listen<ProgressionImport>("migration-progress", (e) => cb(e.payload)),
+
   compatToolsStatus: () => invoke<ToolsStatus>("compat_tools_status"),
   compatToolsInstall: () => invoke<ToolsStatus>("compat_tools_install"),
   compatRun: (site: string, kind: TypeTest, script: string | null, versions: string[]) =>

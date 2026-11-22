@@ -91,6 +91,14 @@ pub enum Error {
     #[error("{outil} a échoué : {detail}")]
     CompatEchec { outil: String, detail: String },
 
+    /// Échec d'une étape d'import depuis Laragon/WAMP.
+    #[error("import : {detail}")]
+    Migration { detail: String },
+
+    /// Laragon ou WAMP tourne encore (ports et données occupés).
+    #[error("{outil} est en marche")]
+    SourceActive { outil: String },
+
     /// Réglages incohérents (ports en double…).
     #[error("réglages invalides : {detail}")]
     ReglagesInvalides { detail: String },
@@ -200,6 +208,8 @@ impl Error {
                 _ => "compat.introuvable",
             },
             Error::CompatEchec { .. } => "compat.echec",
+            Error::Migration { .. } => "migration.echec",
+            Error::SourceActive { .. } => "migration.source_active",
             Error::Fichier { .. } => "fichier.acces",
             Error::Io(_) => "io.generique",
             Error::JsonInvalide { .. } => "json.invalide",
@@ -253,6 +263,8 @@ impl Error {
             Error::HostsEchec { detail } | Error::Ssl { detail } => json!({ "detail": detail }),
             Error::CompatIntrouvable { quoi, aide } => json!({ "quoi": quoi, "aide": aide }),
             Error::CompatEchec { outil, detail } => json!({ "outil": outil, "detail": detail }),
+            Error::Migration { detail } => json!({ "detail": detail }),
+            Error::SourceActive { outil } => json!({ "source": if outil == "wamp" { "WAMP" } else { "Laragon" } }),
             Error::VcRuntime { requis, installe } => json!({
                 "requis": requis,
                 "installe": installe.clone().unwrap_or_else(|| "aucun".into()),
@@ -344,6 +356,8 @@ mod tests {
             Error::CompatIntrouvable { quoi: s(), aide: "phpunit".into() },
             Error::CompatIntrouvable { quoi: s(), aide: "pest".into() },
             Error::CompatEchec { outil: s(), detail: s() },
+            Error::Migration { detail: s() },
+            Error::SourceActive { outil: s() },
             Error::fichier("x", std::io::Error::other("x")),
             Error::Io(std::io::Error::other("x")),
             Error::JsonInvalide { fichier: s(), detail: s() },

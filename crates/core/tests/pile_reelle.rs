@@ -628,6 +628,88 @@ async fn adminer_connexion_automatique() {
     orch.supervisor().stop_all().await;
 }
 
+/// Import RÉEL depuis le Laragon et le WAMP de la machine de développement (lecture seule
+/// chez eux) vers `target/pile-test`. Ignoré si Laragon/WAMP sont absents.
+#[tokio::test]
+#[ignore]
+async fn import_laragon_et_wamp_reel() {
+    use rustserv_core::migration::detect::{detect, racines_standard, SourceKind};
+    use rustserv_core::migration::run::{importer, ImportItem};
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    let paths = Paths::new(racine());
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    for (id, b) in [("nginx", None), ("php", Some("8.3")), ("mariadb", None)] {
+        installe(&inst, &cat, id, b).await;
+    }
+    let mut settings = Settings::default();
+    settings.ports.http = libre();
+    settings.ports.mariadb = libre();
+
+    // Nettoyage AVANT la détection (sinon les noms existants reçoivent un suffixe).
+    for n in ["agence-web", "claude"] {
+        let _ = std::fs::remove_dir_all(paths.www().join(n));
+    }
+    let d = detect(&paths, &settings, &racines_standard());
+    for s in &d.sources {
+        println!("source {:?} ({}) PHP {:?} : {:?}", s.kind, s.root.display(), s.php, s.serveurs.iter().map(|x| format!("{} [{} bases]", x.label, x.bases.len())).collect::<Vec<_>>());
+    }
+    let choisir = |k: SourceKind, n: &str| d.sites.iter().find(|s| s.source == k && s.nom == n).cloned();
+    let (Some(lar), Some(wamp)) = (choisir(SourceKind::Laragon, "agence-web"), choisir(SourceKind::Wamp, "claude")) else {
+        println!("Laragon/WAMP de test absents : test ignoré");
+        return;
+    };
+    println!("à importer : {} → {} (base {:?}), {} → {} (base {:?})", lar.nom, lar.nom_propose, lar.base, wamp.nom, wamp.nom_propose, wamp.base);
+    let items: Vec<ImportItem> = [&lar, &wamp]
+        .iter()
+        .map(|s| ImportItem { source: s.source, dossier: s.dossier.clone(), nom: s.nom_propose.clone(), type_site: s.type_site, base: s.base.clone(), php: Some("8.3".into()), convertir_url: true })
+        .collect();
+    for i in &items {
+        let _ = std::fs::remove_dir_all(paths.www().join(&i.nom));
+    }
+
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    let installed = inst.installed().unwrap();
+    orch.start(Group::Mariadb, &settings, &installed).await.unwrap_or_else(|e| panic!("{e}"));
+    let t0 = std::time::Instant::now();
+    let (res, nouveaux) = importer(&paths, &settings, &inst, &cat, &d.sources, &items, false, &|p| println!("  [{}] {:?} {}", p.site, p.etape, p.detail))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    println!("import en {:.0?}", t0.elapsed());
+    for r in &res {
+        println!("{} : ok={} base={:?} {:?} → {:?} {:?}", r.nom, r.ok, r.base, r.ancienne_url, r.nouvelle_url, r.erreur);
+        assert!(r.ok, "{} : {:?}", r.nom, r.erreur);
+    }
+    assert_eq!(nouveaux.site_php.get(&items[0].nom).map(String::as_str), Some("8.3"));
+
+    // Le site WAMP converti doit répondre sur son nouveau domaine, sans renvoyer vers localhost.
+    let installed = inst.installed().unwrap();
+    orch.start(Group::Web, &nouveaux, &installed).await.unwrap_or_else(|e| panic!("{e}"));
+    for i in &items {
+        let host = format!("{}.test", i.nom);
+        let c = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+        let r = c.get(format!("http://127.0.0.1:{}/", nouveaux.ports.http)).header("Host", &host).send().await.unwrap();
+        let code = r.status().as_u16();
+        let lieu = r.headers().get("location").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+        let corps = r.text().await.unwrap_or_default();
+        println!("{host} → {code} {lieu} ({} octets)", corps.len());
+        assert!(!lieu.contains("localhost"), "{host} renvoie encore vers l'ancienne adresse : {lieu}");
+        assert!(code == 200 || (300..400).contains(&code), "{host} : {code}\n{}", corps.chars().take(600).collect::<String>());
+        if code == 200 {
+            assert!(!corps.contains("Error establishing a database connection"), "{host} : connexion à la base impossible");
+        }
+    }
+    orch.supervisor().stop_all().await;
+    // Aucun serveur temporaire ne doit survivre (processus « moniteur » de MySQL 8+).
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let restants = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", "(Get-CimInstance Win32_Process -Filter \"Name='mysqld.exe'\" | Where-Object { $_.CommandLine -like '*tmp*migration*donnees*' }).Count"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&restants.stdout).trim(), "0", "serveur MySQL temporaire orphelin");
+}
+
 fn libre() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }

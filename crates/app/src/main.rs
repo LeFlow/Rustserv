@@ -10,6 +10,7 @@
 mod commands;
 mod compat_commands;
 mod ext_commands;
+mod migration_commands;
 mod php_commands;
 mod site_commands;
 mod state;
@@ -49,6 +50,8 @@ fn main() {
             commands::services_restart_pending,
             commands::services_restart_all,
             commands::adminer_open,
+            migration_commands::migration_detect,
+            migration_commands::migration_run,
             php_commands::php_overview,
             php_commands::php_set_default,
             php_commands::php_pin,

@@ -279,6 +279,10 @@
       "phpunit_absent": "PHPUnit n'est pas installé dans ce projet. Dans le terminal du site, lancez : composer require --dev phpunit/phpunit",
       "pest_absent": "Pest n'est pas installé dans ce projet. Dans le terminal du site, lancez : composer require --dev pestphp/pest",
       "echec": "{outil} a échoué :\n{detail}"
+    },
+    "migration": {
+      "echec": "Import impossible : {detail}",
+      "source_active": "{source} est encore en marche. Quittez-le complètement (icône près de l'horloge → Quitter) puis relancez l'import : ses données ne doivent pas être en cours d'utilisation."
     }
   },
   "terminal": {
@@ -354,5 +358,43 @@
     "framework_installer": "Installer {outil} dans ce projet",
     "framework_installation": "Installation par Composer…",
     "framework_installe": "{outil} {version} installé dans le projet."
+  },
+  "import": {
+    "ouvrir": "Importer depuis Laragon / WAMP",
+    "titre": "Importer des sites depuis Laragon ou WAMP",
+    "intro": "Rustserv copie les sites et leurs bases : Laragon et WAMP ne sont jamais modifiés (leurs bases sont lues depuis une copie temporaire).",
+    "rien": "Ni Laragon (C:\\laragon) ni WAMP (C:\\wamp64) n'ont été trouvés.",
+    "detection": "Recherche de Laragon et WAMP…",
+    "n_bases": "{n} base(s)",
+    "sans_base": "aucune base",
+    "col_origine": "Site d'origine",
+    "col_base": "Base de données",
+    "col_nom": "Nom dans Rustserv",
+    "col_adresses": "Adresses WordPress",
+    "type": {
+      "wordpress": "WordPress",
+      "laravel": "Laravel",
+      "autre": "Autre"
+    },
+    "base_absente": "base « {base} » introuvable",
+    "php_defaut": "par défaut",
+    "nom_invalide": "Lettres minuscules, chiffres et tirets uniquement.",
+    "nom_existe": "Un site porte déjà ce nom dans Rustserv.",
+    "nom_double": "Nom déjà choisi pour un autre site.",
+    "lancer": "Importer {n} site(s)",
+    "en_cours": "Import en cours… (peut prendre plusieurs minutes)",
+    "avertissement": "Laragon et WAMP doivent être complètement arrêtés (Quitter).",
+    "base": "base {base}",
+    "suite": "Pensez à mettre à jour les domaines (bandeau ci-dessus) pour ouvrir les sites par leur nom.",
+    "etape": {
+      "preparation": "Lecture des bases avec",
+      "export": "Export de la base",
+      "copie": "Copie des fichiers",
+      "import": "Import de la base",
+      "configuration": "Configuration",
+      "adresses": "Conversion des adresses",
+      "termine": "Terminé",
+      "erreur": "Erreur :"
+    }
   }
 }

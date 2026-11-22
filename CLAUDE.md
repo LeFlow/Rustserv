@@ -156,6 +156,25 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   dans le `<Directory>` (le réglage global DOCUMENT_ROOT+SCRIPT_NAME ne convient pas à un Alias).
 - Bouton « Gérer les bases » (carte MariaDB) : installe Adminer, démarre MariaDB + web si besoin.
 
+## Import depuis Laragon / WAMP (`migration/`)
+
+- Choix utilisateur (2026-11-22) : adresses WordPress **converties en .test** ; doublons entre
+  sources **renommés** (suffixe -laragon / -wamp, modifiable).
+- `detect` (lecture seule) : C:\laragon (bin/mysql/mysql-X, data/mysql-<branche>, usr/laragon.ini) et
+  C:\wamp64 (bin/mysql|mariadb/*/data, wampmanager.conf). Noms de bases décodés (`@002d` → `-`).
+  Base d'un site lue dans wp-config.php (DB_NAME) ou .env (DB_DATABASE).
+- `run` : **rien n'est modifié chez Laragon/WAMP**. Pour chaque serveur d'origine : copie des données
+  (sans binlog.*), démarrage du MySQL **d'origine** sur la copie (`--no-defaults`, port libre,
+  `--mysqlx=OFF --disable-log-bin`, `--init-file` qui vide le mot de passe root **de la copie** :
+  WAMP a un root protégé), mysqldump, arrêt. ⚠ MySQL 8+ Windows lance un processus **moniteur** :
+  le serveur temporaire est lancé dans un **Job Object** (sinon orphelin). Démarrage jusqu'à 5 min.
+- Import : `mariadb < dump` dans une base libre (`nom`, `nom_2`…) ; repli si collation `utf8mb4_0900_*`
+  inconnue. wp-config.php / .env adaptés (copie `*.avant-rustserv`). Conversion : WP-CLI
+  `search-replace //ancien //nouveau` (+ variante JSON `\/\/`), `option update siteurl/home`,
+  .htaccess RewriteBase corrigé. Refus si Laragon/WAMP tourne encore (ports 80/443/3306/3307).
+- Test réel `import_laragon_et_wamp_reel` : agence-web (Laragon, MySQL 8.4) et claude (WAMP, MySQL 9.1,
+  localhost/claude → claude.test, page WordPress 200) — utilise les vraies installations, en lecture.
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.
