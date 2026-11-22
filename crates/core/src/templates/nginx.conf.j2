@@ -1,0 +1,82 @@
+# ------------------------------------------------------------------
+# Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
+# Pour personnaliser, copiez ce gabarit dans etc/templates/nginx.conf.j2
+# ------------------------------------------------------------------
+worker_processes 1;
+error_log "{{ logs }}/nginx-error.log" warn;
+pid "{{ tmp }}/nginx/nginx.pid";
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include "{{ server_dir }}/conf/mime.types";
+    default_type application/octet-stream;
+    access_log "{{ logs }}/nginx-access.log";
+
+    # En développement, on évite les caches de fichiers (modifications visibles immédiatement).
+    sendfile off;
+    keepalive_timeout 65;
+    client_max_body_size 256m;
+    server_names_hash_bucket_size 128;
+    fastcgi_read_timeout 300;
+
+    client_body_temp_path "{{ tmp }}/nginx/client_body";
+    proxy_temp_path "{{ tmp }}/nginx/proxy";
+    fastcgi_temp_path "{{ tmp }}/nginx/fastcgi";
+    uwsgi_temp_path "{{ tmp }}/nginx/uwsgi";
+    scgi_temp_path "{{ tmp }}/nginx/scgi";
+
+    # Pools php-cgi : un processus par port, nginx répartit les requêtes.
+{% for u in upstreams %}
+    upstream {{ u.name }} {
+{%- for p in u.ports %}
+        server 127.0.0.1:{{ p }};
+{%- endfor %}
+    }
+{% endfor %}
+
+{%- macro php(upstream, server_dir) %}
+        location ~ [^/]\.php(/|$) {
+            fastcgi_split_path_info ^(.+?\.php)(/.*)$;
+            if (!-f $document_root$fastcgi_script_name) {
+                return 404;
+            }
+            fastcgi_pass {{ upstream }};
+            fastcgi_index index.php;
+            include "{{ server_dir }}/conf/fastcgi_params";
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param PATH_INFO $fastcgi_path_info;
+            fastcgi_param HTTP_PROXY "";
+        }
+{%- endmacro %}
+
+    # Page d'accueil : http://localhost/ liste les projets de www/
+    server {
+        listen {{ http_port }} default_server;
+        server_name localhost 127.0.0.1;
+        root "{{ www }}";
+        index index.php index.html index.htm;
+        autoindex on;
+{%- if default_upstream %}
+{{ php(default_upstream, server_dir) }}
+{%- endif %}
+    }
+{% for s in sites %}
+    # Site {{ s.name }} (PHP {{ s.php_version }})
+    server {
+        listen {{ http_port }};
+        server_name {{ s.host }} *.{{ s.host }};
+        root "{{ s.root }}";
+        index index.php index.html index.htm;
+        access_log "{{ logs }}/sites/{{ s.name }}-access.log";
+        error_log "{{ logs }}/sites/{{ s.name }}-error.log" warn;
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+{{ php(s.upstream, server_dir) }}
+    }
+{% endfor %}
+}

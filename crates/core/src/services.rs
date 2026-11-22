@@ -1,0 +1,372 @@
+//! Assemblage de la pile : choisit les versions installées, génère les
+//! configurations (gabarits), les valide (`nginx -t`, `httpd -t`) et produit
+//! les [`ServiceSpec`] à confier au superviseur.
+//!
+//! Identifiants de service : `nginx`, `apache`, `mariadb`, `php-<version>#<n>`.
+
+use crate::catalog::{version, InstalledPackage};
+use crate::error::{Error, Result};
+use crate::paths::{slash, Paths};
+use crate::php::{self, pool_ports};
+use crate::process::{ServiceSpec, StopStrategy};
+use crate::settings::{Settings, WebServer};
+use crate::{platform, sites, templates};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub const NGINX: &str = "nginx";
+pub const APACHE: &str = "apache";
+pub const MARIADB: &str = "mariadb";
+
+/// Identifiant du n-ième processus du pool d'une version de PHP.
+pub fn php_service_id(version: &str, n: usize) -> String {
+    format!("php-{version}#{n}")
+}
+
+/// Nom d'upstream nginx / balancer Apache pour une version de PHP.
+pub fn upstream_name(version: &str) -> String {
+    format!("php_{}", version.replace('.', "_"))
+}
+
+#[derive(Debug, Serialize)]
+struct Upstream {
+    name: String,
+    ports: Vec<u16>,
+}
+
+#[derive(Debug, Serialize)]
+struct SiteCtx {
+    name: String,
+    host: String,
+    root: String,
+    upstream: String,
+    php_version: String,
+}
+
+/// Contexte commun aux gabarits nginx et Apache.
+#[derive(Debug, Serialize)]
+struct WebContext {
+    server_dir: String,
+    www: String,
+    logs: String,
+    tmp: String,
+    http_port: u16,
+    https_port: u16,
+    upstreams: Vec<Upstream>,
+    /// Upstream PHP du site par défaut (localhost) ; vide si PHP non installé.
+    default_upstream: String,
+    sites: Vec<SiteCtx>,
+}
+
+pub struct Stack<'a> {
+    pub paths: &'a Paths,
+    pub settings: &'a Settings,
+    pub installed: &'a [InstalledPackage],
+}
+
+impl<'a> Stack<'a> {
+    pub fn new(paths: &'a Paths, settings: &'a Settings, installed: &'a [InstalledPackage]) -> Self {
+        Self { paths, settings, installed }
+    }
+
+    /// Version demandée si installée, sinon la plus récente installée.
+    pub fn pick(&self, package: &str, wanted: Option<&str>) -> Result<&'a InstalledPackage> {
+        let candidats = self.installed.iter().filter(|p| p.package == package);
+        if let Some(w) = wanted {
+            if let Some(p) = self.installed.iter().find(|p| p.package == package && p.version == w) {
+                return Ok(p);
+            }
+            tracing::warn!(package, version = w, "version choisie absente, utilisation de la plus récente");
+        }
+        candidats
+            .max_by(|a, b| version::cmp(&a.version, &b.version))
+            .ok_or_else(|| Error::AucuneVersion { id: package.into() })
+    }
+
+    /// PHP par défaut (None si aucun PHP installé : le serveur web sert alors du statique).
+    pub fn default_php(&self) -> Option<&'a InstalledPackage> {
+        self.pick("php", self.settings.versions.php.as_deref()).ok()
+    }
+
+    /// Versions de PHP nécessaires (pour l'instant : la version par défaut ;
+    /// la phase 2 ajoutera les versions choisies par site).
+    pub fn php_needed(&self) -> Vec<&'a InstalledPackage> {
+        self.default_php().into_iter().collect()
+    }
+
+    /// Specs du pool php-cgi d'une version (php.ini créé au besoin).
+    pub fn php_specs(&self, php: &InstalledPackage) -> Result<Vec<ServiceSpec>> {
+        let ini = php::ensure_php_ini(self.paths, &php.path, &php.version, self.settings)?;
+        let exe = php.path.join(platform::exe_name("php-cgi"));
+        // Le dossier PHP en tête du PATH : les DLL dépendantes (libssl, libsodium…) y sont.
+        let path_env = format!("{};{}", php.path.display(), std::env::var("PATH").unwrap_or_default());
+        Ok(pool_ports(&php.version, self.settings.php_pool_size)
+            .into_iter()
+            .enumerate()
+            .map(|(n, port)| {
+                let mut s = ServiceSpec::new(
+                    php_service_id(&php.version, n),
+                    &exe,
+                    self.paths.logs().join(format!("php-{}-cgi.log", php.version)),
+                );
+                s.args = vec!["-b".into(), format!("127.0.0.1:{port}"), "-c".into(), ini.display().to_string()];
+                s.env = vec![
+                    // Par défaut php-cgi s'arrête après 500 requêtes : on désactive cette limite.
+                    ("PHP_FCGI_MAX_REQUESTS".into(), "0".into()),
+                    ("PHPRC".into(), ini.parent().unwrap().display().to_string()),
+                    ("PATH".into(), path_env.clone()),
+                ];
+                s.ports = vec![port];
+                s.stop = StopStrategy::Kill;
+                s
+            })
+            .collect())
+    }
+
+    fn web_context(&self, server: &InstalledPackage) -> Result<WebContext> {
+        let phps = self.php_needed();
+        let upstreams = phps
+            .iter()
+            .map(|p| Upstream { name: upstream_name(&p.version), ports: pool_ports(&p.version, self.settings.php_pool_size) })
+            .collect();
+        let default = self.default_php();
+        let sites = match default {
+            Some(php) => sites::discover(self.paths, &self.settings.tld)?
+                .into_iter()
+                .map(|s| SiteCtx {
+                    name: s.name,
+                    host: s.host,
+                    root: slash(&s.root),
+                    upstream: upstream_name(&php.version),
+                    php_version: php.version.clone(),
+                })
+                .collect(),
+            None => vec![],
+        };
+        Ok(WebContext {
+            server_dir: slash(&server.path),
+            www: slash(&self.paths.www()),
+            logs: slash(&self.paths.logs()),
+            tmp: slash(&self.paths.tmp()),
+            http_port: self.settings.ports.http,
+            https_port: self.settings.ports.https,
+            upstreams,
+            default_upstream: default.map(|p| upstream_name(&p.version)).unwrap_or_default(),
+            sites,
+        })
+    }
+
+    /// Serveur web choisi dans les réglages.
+    pub fn web_server(&self) -> Result<ServiceSpec> {
+        match self.settings.web_server {
+            WebServer::Nginx => self.nginx(),
+            WebServer::Apache => self.apache(),
+        }
+    }
+
+    /// Génère `etc/nginx/nginx.conf`, le valide et renvoie la spec.
+    pub fn nginx(&self) -> Result<ServiceSpec> {
+        let pkg = self.pick("nginx", self.settings.versions.nginx.as_deref())?;
+        let conf = self.paths.etc().join("nginx").join("nginx.conf");
+        for d in ["client_body", "proxy", "fastcgi", "uwsgi", "scgi"] {
+            mkdir(&self.paths.tmp().join("nginx").join(d))?;
+        }
+        mkdir(&self.paths.logs().join("sites"))?;
+        write(&conf, &templates::render(self.paths, templates::NGINX_CONF, self.web_context(pkg)?)?)?;
+
+        let exe = pkg.path.join(platform::exe_name("nginx"));
+        // -p : préfixe = racine portable (nginx y cherche logs/ au démarrage).
+        let base = vec!["-p".to_string(), format!("{}/", slash(self.paths.root())), "-c".into(), slash(&conf)];
+        check_config(NGINX, &exe, &[base.clone(), vec!["-t".into()]].concat(), &pkg.path)?;
+
+        let mut s = ServiceSpec::new(NGINX, &exe, self.paths.logs().join("nginx.log"));
+        s.args = base.clone();
+        s.cwd = pkg.path.clone();
+        s.ports = vec![self.settings.ports.http];
+        s.stop = StopStrategy::Command { program: exe, args: [base, vec!["-s".into(), "quit".into()]].concat() };
+        s.stop_timeout = Duration::from_secs(5);
+        Ok(s)
+    }
+
+    /// Génère `etc/apache/httpd.conf`, le valide et renvoie la spec.
+    pub fn apache(&self) -> Result<ServiceSpec> {
+        let pkg = self.pick("apache", self.settings.versions.apache.as_deref())?;
+        let conf = self.paths.etc().join("apache").join("httpd.conf");
+        mkdir(&self.paths.tmp().join("apache"))?;
+        mkdir(&self.paths.logs().join("sites"))?;
+        write(&conf, &templates::render(self.paths, templates::HTTPD_CONF, self.web_context(pkg)?)?)?;
+
+        let exe = pkg.path.join("bin").join(platform::exe_name("httpd"));
+        let base = vec!["-f".to_string(), slash(&conf)];
+        check_config(APACHE, &exe, &[base.clone(), vec!["-t".into()]].concat(), &pkg.path)?;
+
+        let mut s = ServiceSpec::new(APACHE, &exe, self.paths.logs().join("apache.log"));
+        s.args = base;
+        s.cwd = pkg.path.clone();
+        s.ports = vec![self.settings.ports.http];
+        // Apache (mode console Windows) surveille l'événement « ap<pid>_shutdown ».
+        s.stop = StopStrategy::NamedEvent("ap{pid}_shutdown".into());
+        Ok(s)
+    }
+}
+
+impl Stack<'_> {
+    /// Dossier de données MariaDB : un par branche (12.3, 11.4…), car une
+    /// montée de version majeure nécessite une migration (mariadb-upgrade).
+    pub fn mariadb_datadir(&self, pkg: &InstalledPackage) -> PathBuf {
+        self.paths.data().join(format!("mariadb-{}", version::branch(&pkg.version)))
+    }
+
+    /// Génère `etc/mariadb/my.ini`, initialise le dossier de données au premier
+    /// lancement (`mariadb-install-db`) et renvoie la spec.
+    pub fn mariadb(&self) -> Result<ServiceSpec> {
+        let pkg = self.pick(MARIADB, self.settings.versions.mariadb.as_deref())?;
+        let bin = pkg.path.join("bin");
+        let datadir = self.mariadb_datadir(pkg);
+        let conf = self.paths.etc().join("mariadb").join("my.ini");
+        mkdir(&self.paths.tmp().join("mariadb"))?;
+
+        // Exécutable serveur : « mariadbd » (récent) ou « mysqld » (anciennes versions).
+        let server = ["mariadbd", "mysqld"]
+            .iter()
+            .map(|n| bin.join(platform::exe_name(n)))
+            .find(|p| p.is_file())
+            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadbd")) })?;
+
+        if !datadir.join("mysql").is_dir() {
+            self.mariadb_init(pkg, &bin, &datadir)?;
+        }
+
+        let ctx = serde_json::json!({
+            "server_dir": slash(&pkg.path),
+            "datadir": slash(&datadir),
+            "port": self.settings.ports.mariadb,
+            "logs": slash(&self.paths.logs()),
+            "tmp": slash(&self.paths.tmp()),
+        });
+        write(&conf, &templates::render(self.paths, templates::MY_INI, ctx)?)?;
+
+        let mut s = ServiceSpec::new(MARIADB, &server, self.paths.logs().join("mariadb.log"));
+        // --defaults-file doit être le premier argument.
+        s.args = vec![format!("--defaults-file={}", slash(&conf))];
+        s.cwd = pkg.path.clone();
+        s.ports = vec![self.settings.ports.mariadb];
+        // mariadbd (Windows) surveille l'événement « MySQLShutdown<pid> » : arrêt propre,
+        // indispensable pour ne pas abîmer les bases.
+        s.stop = StopStrategy::NamedEvent("MySQLShutdown{pid}".into());
+        s.stop_timeout = Duration::from_secs(30);
+        s.start_timeout = Duration::from_secs(60);
+        Ok(s)
+    }
+
+    /// Crée le dossier de données (utilisateur root sans mot de passe, accès local uniquement).
+    fn mariadb_init(&self, pkg: &InstalledPackage, bin: &Path, datadir: &Path) -> Result<()> {
+        let exe = ["mariadb-install-db", "mysql_install_db"]
+            .iter()
+            .map(|n| bin.join(platform::exe_name(n)))
+            .find(|p| p.is_file())
+            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadb-install-db")) })?;
+        tracing::info!(datadir = %datadir.display(), "initialisation du dossier de données MariaDB");
+        if let Some(parent) = datadir.parent() {
+            mkdir(parent)?;
+        }
+        let args = vec![format!("--datadir={}", datadir.display()), format!("--port={}", self.settings.ports.mariadb)];
+        if let Err(e) = check_config(MARIADB, &exe, &args, &pkg.path) {
+            // Un dossier à moitié créé bloquerait les essais suivants.
+            let _ = std::fs::remove_dir_all(datadir);
+            return Err(match e {
+                Error::ConfigInvalide { detail, .. } => Error::BaseInit { detail },
+                autre => autre,
+            });
+        }
+        Ok(())
+    }
+}
+
+fn mkdir(p: &Path) -> Result<()> {
+    std::fs::create_dir_all(p).map_err(|e| Error::fichier(p, e))
+}
+
+fn write(p: &Path, content: &str) -> Result<()> {
+    if let Some(d) = p.parent() {
+        mkdir(d)?;
+    }
+    std::fs::write(p, content).map_err(|e| Error::fichier(p, e))
+}
+
+/// Lance la vérification de configuration du serveur (`-t`) et renvoie sa sortie en cas d'échec.
+fn check_config(service: &str, exe: &Path, args: &[String], cwd: &PathBuf) -> Result<()> {
+    if !exe.is_file() {
+        return Err(Error::ExecutableIntrouvable { chemin: exe.to_path_buf() });
+    }
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args).current_dir(cwd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(platform::CREATE_NO_WINDOW);
+    }
+    let out = cmd.output().map_err(|e| Error::ServiceDemarrage { service: service.into(), detail: e.to_string(), journal: String::new() })?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let detail = format!("{}{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout)).trim().to_string();
+    Err(Error::ConfigInvalide { service: service.into(), detail })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pkg(package: &str, version: &str, root: &Path) -> InstalledPackage {
+        InstalledPackage {
+            package: package.into(),
+            version: version.into(),
+            sha256: String::new(),
+            installed_at: 0,
+            path: root.join("bin").join(package).join(format!("{package}-{version}")),
+        }
+    }
+
+    #[test]
+    fn choisit_la_version() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        let installed = vec![pkg("php", "8.3.9", t.path()), pkg("php", "8.3.15", t.path()), pkg("nginx", "1.30.7", t.path())];
+        let mut settings = Settings::default();
+        let st = Stack::new(&paths, &settings, &installed);
+        assert_eq!(st.pick("php", None).unwrap().version, "8.3.15");
+        assert_eq!(st.pick("php", Some("8.3.9")).unwrap().version, "8.3.9");
+        assert_eq!(st.pick("php", Some("5.6.0")).unwrap().version, "8.3.15", "repli sur la plus récente");
+        assert_eq!(st.pick("mariadb", None).unwrap_err().code(), "service.aucune_version");
+        settings.versions.php = Some("8.3.9".into());
+        assert_eq!(Stack::new(&paths, &settings, &installed).default_php().unwrap().version, "8.3.9");
+    }
+
+    #[test]
+    fn gabarits_nginx_et_apache_complets() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        std::fs::create_dir_all(paths.www().join("blog")).unwrap();
+        let installed = vec![pkg("php", "8.3.37", t.path()), pkg("nginx", "1.30.7", t.path())];
+        let settings = Settings::default();
+        let st = Stack::new(&paths, &settings, &installed);
+        let ctx = st.web_context(&installed[1]).unwrap();
+
+        let n = templates::render(&paths, templates::NGINX_CONF, &ctx).unwrap();
+        assert!(n.contains("upstream php_8_3_37 {"), "{n}");
+        assert!(n.contains("server 127.0.0.1:9830;") && n.contains("server 127.0.0.1:9833;"));
+        assert!(n.contains("server_name blog.test *.blog.test;"));
+        assert!(n.contains("fastcgi_pass php_8_3_37;"));
+        assert!(!n.contains(":\\"), "chemin Windows avec antislash dans nginx.conf");
+
+        let a = templates::render(&paths, templates::HTTPD_CONF, &ctx).unwrap();
+        // Le « / » final est indispensable avec SetHandler (sinon « No protocol handler »).
+        assert!(a.contains("<Proxy \"balancer://php_8_3_37/\">"));
+        assert!(a.contains("SetHandler \"proxy:balancer://php_8_3_37/\""));
+        assert!(a.contains("BalancerMember \"fcgi://127.0.0.1:9831\""));
+        assert!(a.contains("ServerName blog.test"));
+    }
+}

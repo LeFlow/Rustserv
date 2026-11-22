@@ -1,0 +1,141 @@
+{
+  "app": {
+    "nom": "Rustserv",
+    "version": "Version {version}",
+    "racine": "Dossier : {racine}",
+    "hors_tauri": "Cette page est l'interface de Rustserv : ouvrez-la depuis l'application (pnpm tauri dev), pas dans un navigateur."
+  },
+  "nav": {
+    "services": "Services",
+    "php": "PHP",
+    "sites": "Sites",
+    "catalogue": "Catalogue",
+    "parametres": "Paramètres"
+  },
+  "pages": {
+    "bientot": "Cette section arrive dans une prochaine étape."
+  },
+  "actions": {
+    "installer": "Installer",
+    "annuler": "Annuler",
+    "supprimer": "Supprimer",
+    "demarrer": "Démarrer",
+    "arreter": "Arrêter",
+    "redemarrer": "Redémarrer",
+    "enregistrer": "Enregistrer"
+  },
+  "services": {
+    "tout_demarrer": "Tout démarrer",
+    "tout_arreter": "Tout arrêter",
+    "ouvrir": "Ouvrir {url}",
+    "installer": "Installer depuis le catalogue",
+    "port": "port {ports}",
+    "ports": "ports {ports}",
+    "pool": "processus PHP (un par port)",
+    "voir_journal": "Journal",
+    "masquer_journal": "Masquer le journal",
+    "journal_vide": "(journal vide)",
+    "depuis_s": "depuis {n} s",
+    "depuis_min": "depuis {n} min",
+    "depuis_h": "depuis {n} h",
+    "groupe": {
+      "web": "Serveur web ({logiciel})",
+      "php": "PHP (FastCGI)",
+      "mariadb": "Base de données MariaDB"
+    },
+    "etat": {
+      "arrete": "Arrêté",
+      "demarrage": "Démarrage…",
+      "en_cours": "En marche",
+      "arret": "Arrêt en cours…",
+      "erreur": "Erreur"
+    }
+  },
+  "parametres": {
+    "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
+    "enregistre": "Réglages enregistrés. Redémarrez les services concernés pour les appliquer.",
+    "serveur_web": "Serveur web",
+    "nginx_aide": "léger et rapide, recommandé",
+    "apache_aide": "nécessaire pour les fichiers .htaccess (WordPress…)",
+    "ports": "Ports",
+    "pool": "Processus PHP par version",
+    "pool_aide": "Chaque processus traite une requête à la fois : 4 suffit largement en développement.",
+    "fuseau": "Fuseau horaire",
+    "sites": "Sites",
+    "tld": "Domaine des sites",
+    "tld_aide": "Le dossier www/monsite sera accessible sur monsite.{tld}."
+  },
+  "catalogue": {
+    "mis_a_jour": "Catalogue du {date}",
+    "repli": "Votre fichier catalog.json n'a pas pu être lu : le catalogue intégré est utilisé à la place.",
+    "installe": "Installé",
+    "telechargement": "Téléchargement… {fait} / {total}",
+    "telechargement_inconnu": "Téléchargement… {fait}",
+    "toutes": "Afficher toutes les versions ({n})",
+    "moins": "Afficher seulement les dernières versions",
+    "phase": {
+      "preparation": "Préparation…",
+      "extraction": "Extraction…",
+      "termine": "Terminé"
+    },
+    "categorie": {
+      "web": "Serveur web",
+      "database": "Base de données",
+      "php": "PHP",
+      "tool": "Outil"
+    }
+  },
+  "erreurs": {
+    "annule": "Opération annulée.",
+    "catalogue": {
+      "invalide": "Le catalogue contient {nombre} erreur(s) : {detail}",
+      "paquet_inconnu": "« {id} » n'existe pas dans le catalogue.",
+      "version_inconnue": "La version {version} de {id} n'existe pas dans le catalogue."
+    },
+    "installation": {
+      "deja_installe": "{id} {version} est déjà installé (ou en cours d'installation).",
+      "non_installe": "{id} {version} n'est pas installé.",
+      "archive": "L'archive {fichier} est inutilisable : {detail}",
+      "vcruntime": "Ce programme a besoin du runtime Microsoft Visual C++ {requis} ou plus récent (installé : {installe}). Téléchargez-le ici puis réessayez : {lien}"
+    },
+    "telechargement": {
+      "echec": "Le téléchargement a échoué ({url}). Vérifiez votre connexion Internet. Détail : {detail}",
+      "http": "Le serveur a refusé le téléchargement (erreur {status}) : {url}",
+      "hash": "Le fichier {fichier} est corrompu ou a été modifié (empreinte SHA256 différente). Il a été supprimé par sécurité."
+    },
+    "inconnue": "Une erreur inattendue est survenue : {detail}",
+    "port": {
+      "occupe": "Le port {port} est déjà utilisé par « {processus} » (PID {pid}). Fermez ce programme ou changez de port dans les paramètres.",
+      "reserve": "Le port {port} est réservé par Windows (souvent par Hyper-V, WSL ou Docker). Choisissez un autre port dans les paramètres."
+    },
+    "service": {
+      "demarrage": "{service} n'a pas pu démarrer : {detail}. Dernières lignes du journal :\n{journal}",
+      "plantage": "{service} s'est arrêté de façon inattendue (code {code}) et n'a pas pu être relancé. Dernières lignes du journal :\n{journal}",
+      "deja_demarre": "{service} est déjà démarré.",
+      "inconnu": "Service inconnu : {service}.",
+      "executable": "Le programme « {chemin} » est introuvable. Réinstallez-le depuis le catalogue.",
+      "aucune_version": "Aucune version de {id} n'est installée. Installez-en une depuis la page Catalogue.",
+      "base_init": "La création du dossier de données MariaDB a échoué :\n{detail}"
+    },
+    "reglages": {
+      "invalides": "Réglages non enregistrés : {detail}."
+    },
+    "config": {
+      "invalide": "La configuration de {service} contient une erreur :\n{detail}",
+      "gabarit": "Le gabarit de configuration {nom} contient une erreur : {detail}"
+    },
+    "fichier": {
+      "acces": "Impossible d'accéder à « {chemin} » : {detail}"
+    },
+    "io": {
+      "generique": "Erreur de lecture/écriture : {detail}"
+    },
+    "json": {
+      "invalide": "Le fichier {fichier} est mal formé : {detail}"
+    },
+    "admin": {
+      "requis": "Cette opération nécessite les droits administrateur : {operation}. Acceptez la demande de Windows pour continuer."
+    },
+    "interne": "Erreur interne de Rustserv : {detail}"
+  }
+}

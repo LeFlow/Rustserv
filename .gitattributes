@@ -1,0 +1,7 @@
+# Fins de ligne LF dans le dépôt et dans la copie de travail (cohérent entre machines).
+* text=auto eol=lf
+
+# Binaires
+*.png binary
+*.ico binary
+*.icns binary

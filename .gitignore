@@ -1,0 +1,6 @@
+/target/
+/node_modules/
+/ui/dist/
+/portable/
+/crates/app/gen/
+*.log

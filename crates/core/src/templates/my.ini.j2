@@ -1,0 +1,26 @@
+# ------------------------------------------------------------------
+# Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
+# Pour personnaliser, copiez ce gabarit dans etc/templates/my.ini.j2
+# ------------------------------------------------------------------
+[mysqld]
+basedir="{{ server_dir }}"
+datadir="{{ datadir }}"
+port={{ port }}
+# Accessible uniquement depuis cette machine.
+bind-address=127.0.0.1
+log-error="{{ logs }}/mariadb-error.log"
+pid-file="{{ tmp }}/mariadb/mariadb.pid"
+tmpdir="{{ tmp }}/mariadb"
+
+character-set-server=utf8mb4
+collation-server=utf8mb4_unicode_ci
+max_allowed_packet=256M
+innodb_buffer_pool_size=256M
+innodb_log_file_size=64M
+# Pas de résolution DNS des clients : connexions locales plus rapides.
+skip-name-resolve
+
+[client]
+port={{ port }}
+host=127.0.0.1
+default-character-set=utf8mb4

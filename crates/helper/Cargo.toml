@@ -1,0 +1,8 @@
+[package]
+name = "rustserv-helper"
+description = "Helper privilégié de Rustserv (lancé avec élévation UAC à la demande)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

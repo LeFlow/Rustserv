@@ -1,0 +1,36 @@
+[package]
+name = "rustserv-core"
+description = "Noyau de Rustserv : processus, catalogue, configs, PHP. IndÃ©pendant de Tauri."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "rustserv_core"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+reqwest = { version = "0.13.5", default-features = false, features = ["http2", "json", "native-tls", "stream", "system-proxy"] }
+sha2 = "0.11.1"
+hex = "0.4.3"
+futures-util = "0.3.34"
+zip = { version = "9.8.1", default-features = false, features = ["deflate"] }
+minijinja = { version = "3.1.0", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
+
+# Faux service pour les tests du superviseur (non distribué).
+[[bin]]
+name = "rustserv-fake-service"
+path = "src/bin/fake_service.rs"
+test = false
+doc = false

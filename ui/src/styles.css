@@ -1,0 +1,46 @@
+/* Thème global : couleurs en variables, mode sombre automatique selon Windows. */
+:root {
+  --bg: #f6f7f9;
+  --bg-nav: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #eceef2;
+  --fg: #1d2330;
+  --muted: #6b7385;
+  --accent: #c2410c;
+  --ok: #15803d;
+  --danger: #b91c1c;
+  --border: #e2e5ea;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181e;
+    --bg-nav: #1c2028;
+    --bg-card: #1f242d;
+    --bg-hover: #2a303b;
+    --fg: #e6e8ec;
+    --muted: #9aa1ae;
+    --accent: #ea580c;
+    --ok: #22c55e;
+    --danger: #f87171;
+    --border: #2d333e;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+.muted { color: var(--muted); }
+
+/* Boutons */
+button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--fg); padding: 5px 12px; }
+button:hover { background: var(--bg-hover); }
+button.primaire { background: var(--accent); border-color: var(--accent); color: white; }
+button.primaire:hover { filter: brightness(1.1); }
+button.danger { color: var(--danger); }
+button.lien { border: 0; background: none; color: var(--accent); padding: 4px 0; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--bg-hover); color: var(--muted); }
+.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }

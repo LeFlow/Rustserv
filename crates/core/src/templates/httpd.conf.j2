@@ -1,0 +1,117 @@
+# ------------------------------------------------------------------
+# Généré par Rustserv : NE PAS MODIFIER (sera réécrit).
+# Pour personnaliser, copiez ce gabarit dans etc/templates/httpd.conf.j2
+# ------------------------------------------------------------------
+Define SRVROOT "{{ server_dir }}"
+ServerRoot "{{ server_dir }}"
+Listen {{ http_port }}
+
+LoadModule access_compat_module modules/mod_access_compat.so
+LoadModule actions_module modules/mod_actions.so
+LoadModule alias_module modules/mod_alias.so
+LoadModule allowmethods_module modules/mod_allowmethods.so
+LoadModule auth_basic_module modules/mod_auth_basic.so
+LoadModule authn_core_module modules/mod_authn_core.so
+LoadModule authn_file_module modules/mod_authn_file.so
+LoadModule authz_core_module modules/mod_authz_core.so
+LoadModule authz_groupfile_module modules/mod_authz_groupfile.so
+LoadModule authz_host_module modules/mod_authz_host.so
+LoadModule authz_user_module modules/mod_authz_user.so
+LoadModule autoindex_module modules/mod_autoindex.so
+LoadModule deflate_module modules/mod_deflate.so
+LoadModule dir_module modules/mod_dir.so
+LoadModule env_module modules/mod_env.so
+LoadModule expires_module modules/mod_expires.so
+LoadModule filter_module modules/mod_filter.so
+LoadModule headers_module modules/mod_headers.so
+LoadModule include_module modules/mod_include.so
+LoadModule lbmethod_byrequests_module modules/mod_lbmethod_byrequests.so
+LoadModule log_config_module modules/mod_log_config.so
+LoadModule mime_module modules/mod_mime.so
+LoadModule negotiation_module modules/mod_negotiation.so
+LoadModule proxy_module modules/mod_proxy.so
+LoadModule proxy_balancer_module modules/mod_proxy_balancer.so
+LoadModule proxy_fcgi_module modules/mod_proxy_fcgi.so
+LoadModule rewrite_module modules/mod_rewrite.so
+LoadModule setenvif_module modules/mod_setenvif.so
+LoadModule slotmem_shm_module modules/mod_slotmem_shm.so
+LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
+
+ServerName localhost:{{ http_port }}
+ServerAdmin admin@localhost
+PidFile "{{ tmp }}/apache/httpd.pid"
+
+ErrorLog "{{ logs }}/apache-error.log"
+LogLevel warn
+LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+CustomLog "{{ logs }}/apache-access.log" combined
+
+TypesConfig conf/mime.types
+AddType application/x-compress .Z
+AddType application/x-gzip .gz .tgz
+
+# Recommandé sous Windows (évite des blocages réseau et des fichiers servis périmés).
+AcceptFilter http none
+AcceptFilter https none
+EnableSendfile off
+EnableMMAP off
+
+<Directory />
+    AllowOverride none
+    Require all denied
+</Directory>
+
+<Files ".ht*">
+    Require all denied
+</Files>
+
+DirectoryIndex index.php index.html index.htm
+
+# php-cgi n'est pas php-fpm : mode FastCGI générique, et SCRIPT_FILENAME
+# reconstruit explicitement (avec un balancer, Apache transmet sinon une URL
+# « proxy:balancer://… » que php-cgi ne sait pas ouvrir).
+ProxyFCGIBackendType GENERIC
+ProxyFCGISetEnvIf "true" SCRIPT_FILENAME "%{DOCUMENT_ROOT}%{reqenv:SCRIPT_NAME}"
+
+# Pools php-cgi : Apache répartit les requêtes entre les processus.
+{% for u in upstreams %}
+<Proxy "balancer://{{ u.name }}/">
+{%- for p in u.ports %}
+    BalancerMember "fcgi://127.0.0.1:{{ p }}"
+{%- endfor %}
+</Proxy>
+{% endfor %}
+
+# Page d'accueil : http://localhost/ liste les projets de www/
+<VirtualHost *:{{ http_port }}>
+    ServerName localhost
+    DocumentRoot "{{ www }}"
+    <Directory "{{ www }}">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+{%- if default_upstream %}
+    <FilesMatch "\.php$">
+        SetHandler "proxy:balancer://{{ default_upstream }}/"
+    </FilesMatch>
+{%- endif %}
+</VirtualHost>
+{% for s in sites %}
+# Site {{ s.name }} (PHP {{ s.php_version }})
+<VirtualHost *:{{ http_port }}>
+    ServerName {{ s.host }}
+    ServerAlias *.{{ s.host }}
+    DocumentRoot "{{ s.root }}"
+    ErrorLog "{{ logs }}/sites/{{ s.name }}-apache-error.log"
+    CustomLog "{{ logs }}/sites/{{ s.name }}-apache-access.log" combined
+    <Directory "{{ s.root }}">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    <FilesMatch "\.php$">
+        SetHandler "proxy:balancer://{{ s.upstream }}/"
+    </FilesMatch>
+</VirtualHost>
+{% endfor %}
