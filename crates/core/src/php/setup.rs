@@ -31,6 +31,14 @@ pub fn pool_ports(php_version: &str, size: u8) -> Vec<u16> {
 /// Crée `etc/php/<version>/php.ini` à partir de `php.ini-development` s'il n'existe pas.
 /// Ne modifie **jamais** un php.ini existant (l'utilisateur a pu le personnaliser).
 pub fn ensure_php_ini(paths: &Paths, php_dir: &Path, version: &str, settings: &Settings) -> Result<PathBuf> {
+    // Dossiers temporaires de PHP (sessions, envois de fichiers) : recréés à **chaque** fois,
+    // car tmp/ peut être vidé ou absent (copie de la version portable sans tmp/, nettoyage).
+    // Sans eux : « session_start(): open(...) failed » (Adminer, WordPress…).
+    let tmp = paths.tmp().join("php");
+    for d in ["sessions", "uploads"] {
+        let dir = tmp.join(d);
+        std::fs::create_dir_all(&dir).map_err(|e| Error::fichier(&dir, e))?;
+    }
     let dest = php_ini_path(paths, version);
     if dest.exists() {
         return Ok(dest);
@@ -53,9 +61,6 @@ pub fn ensure_php_ini(paths: &Paths, php_dir: &Path, version: &str, settings: &S
 /// Réglages adaptés au développement local et au mode portable.
 fn configure(ini: &mut IniFile, paths: &Paths, php_dir: &Path, version: &str, settings: &Settings) {
     let tmp = paths.tmp().join("php");
-    for d in ["sessions", "uploads"] {
-        let _ = std::fs::create_dir_all(tmp.join(d));
-    }
     let ext_dir = php_dir.join("ext");
     ini.set("extension_dir", &quote(&slash(&ext_dir)));
     ini.set("error_log", &quote(&slash(&paths.logs().join(format!("php-{version}-error.log")))));
@@ -90,6 +95,21 @@ mod tests {
         assert_eq!(pool_ports("7.4.33", 2), vec![9740, 9741]);
         assert_eq!(pool_ports("8.6.0", 1), vec![9860]);
         assert_eq!(pool_ports("8.3.1", 50).len(), 10, "pool borné à 10");
+    }
+
+    #[test]
+    fn dossiers_temporaires_recrees_si_tmp_vide() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path().join("root"));
+        paths.ensure_layout().unwrap();
+        let php = t.path().join("php-8.3.37");
+        std::fs::create_dir_all(&php).unwrap();
+        ensure_php_ini(&paths, &php, "8.3.37", &Settings::default()).unwrap();
+        // Copie portable sans tmp/ : le php.ini existe déjà, les dossiers non.
+        std::fs::remove_dir_all(paths.tmp()).unwrap();
+        ensure_php_ini(&paths, &php, "8.3.37", &Settings::default()).unwrap();
+        assert!(paths.tmp().join("php").join("sessions").is_dir());
+        assert!(paths.tmp().join("php").join("uploads").is_dir());
     }
 
     #[test]
