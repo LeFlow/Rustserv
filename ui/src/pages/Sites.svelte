@@ -8,7 +8,7 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, type HostsStatus, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
+  import { api, type HostsStatus, type MariadbVersion, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
   import { nouveauTerminal } from "../lib/terminaux.svelte";
   import Import from "./Import.svelte";
 
@@ -24,10 +24,23 @@
   let info = $state<string | null>(null);
   let occupe = $state<Record<string, boolean>>({});
   let importOuvert = $state(false);
+  let mariadbs = $state<MariadbVersion[]>([]);
+
+  /** Change la MariaDB d'un site : sa base est copiée vers la nouvelle version. */
+  function choisirMariadb(s: SiteView, valeur: string) {
+    executer("db-" + s.name, async () => {
+      const r = await api.siteSetMariadb(s.name, valeur === "" ? null : valeur);
+      if (r.de === r.vers) return t("sites.db_inchange", { site: s.name });
+      return r.base
+        ? t("sites.db_deplacee", { site: s.name, base: r.base, de: r.de, vers: r.vers, port: r.port })
+        : t("sites.db_sans_base", { site: s.name, vers: r.vers });
+    });
+  }
 
   async function charger() {
     try {
-      const [s, php, h, c, r] = await Promise.all([api.sitesList(), api.phpOverview(), api.hostsStatus(), api.sslStatus(), api.settingsGet()]);
+      const [s, php, h, c, r, m] = await Promise.all([api.sitesList(), api.phpOverview(), api.hostsStatus(), api.sslStatus(), api.settingsGet(), api.mariadbVersions()]);
+      mariadbs = m;
       sites = s;
       branches = php.versions.filter((v) => v.active).map((v) => v.branch);
       defaut = php.versions.find((v) => v.default) ?? null;
@@ -124,7 +137,7 @@
 {:else}
   <table class="carte">
     <thead>
-      <tr><th>{t("sites.col_site")}</th><th>PHP</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
+      <tr><th>{t("sites.col_site")}</th><th>PHP</th><th>MariaDB</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
     </thead>
     <tbody>
       {#each sites as s (s.name)}
@@ -142,6 +155,17 @@
               {/if}
             </select>
             {#if s.php_missing}<div class="avert petit">{t("sites.php_manquant", { branche: s.php_choice ?? "", version: s.php_version ?? "—" })}</div>{/if}
+          </td>
+          <td>
+            {#if mariadbs.length > 1}
+              <select disabled={occupe["db-" + s.name]} value={s.mariadb_choice ?? ""} title={t("sites.db_aide")} onchange={(e) => choisirMariadb(s, e.currentTarget.value)}>
+                <option value="">{t("sites.php_defaut", { version: mariadbs.find((x) => x.defaut)?.branch ?? "—" })}</option>
+                {#each mariadbs.filter((x) => !x.defaut) as m}<option value={m.branch}>MariaDB {m.branch}</option>{/each}
+              </select>
+              {#if occupe["db-" + s.name]}<div class="muted petit">{t("sites.db_en_cours")}</div>{/if}
+            {:else}
+              <span class="muted petit">{s.mariadb_version ?? "—"}</span>
+            {/if}
           </td>
           <td class="liens">
             {#if declare(s)}

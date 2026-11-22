@@ -44,6 +44,22 @@ pub struct GroupView {
     pub members: Vec<StatusEvent>,
     /// Fichier journal principal du groupe.
     pub log_file: String,
+    /// Instances (MariaDB multi-versions) : id de service, version, port.
+    pub instances: Vec<Instance>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Instance {
+    pub id: String,
+    pub version: String,
+    pub port: u16,
+    /// Instance par défaut (port des réglages).
+    pub defaut: bool,
+}
+
+/// Le service appartient-il à MariaDB (« mariadb » ou « mariadb-11.4 ») ?
+fn est_mariadb(id: &str) -> bool {
+    id == MARIADB || id.starts_with("mariadb-")
 }
 
 pub struct Orchestrator {
@@ -107,10 +123,19 @@ impl Orchestrator {
                 self.start_specs(spec).await
             }
             Group::Mariadb => {
-                let spec = self.build(settings, installed, |st| Ok(vec![st.mariadb()?])).await?;
-                self.start_specs(spec).await
+                let specs = self.build(settings, installed, |st| st.mariadb_specs()).await?;
+                self.start_specs(specs).await
             }
         }
+    }
+
+    /// Démarre (si besoin) l'instance MariaDB d'une version précise et renvoie son port.
+    pub async fn ensure_mariadb(&self, settings: &Settings, installed: &[InstalledPackage], pkg: &InstalledPackage) -> Result<u16> {
+        let p = pkg.clone();
+        let spec = self.build(settings, installed, move |st| Ok(vec![st.mariadb_spec(&p)?])).await?;
+        let port = spec[0].ports[0];
+        self.start_specs(spec).await?;
+        Ok(port)
     }
 
     /// Arrête un groupe. Arrêter PHP arrête aussi le serveur web (qui en dépend).
@@ -122,7 +147,7 @@ impl Orchestrator {
                 self.supervisor.stop(APACHE).await?;
                 self.supervisor.states().into_iter().map(|s| s.id).filter(|id| id.starts_with("php-")).collect()
             }
-            Group::Mariadb => vec![MARIADB.into()],
+            Group::Mariadb => self.supervisor.states().into_iter().map(|s| s.id).filter(|id| est_mariadb(id)).collect(),
         };
         futures_util::future::join_all(ids.iter().map(|id| self.supervisor.stop(id))).await;
         Ok(())
@@ -140,6 +165,15 @@ impl Orchestrator {
         let actif = |id: &str| states.iter().any(|s| s.id == id && !matches!(s.state, ServiceState::Arrete | ServiceState::Erreur { .. }));
         let php_actif = states.iter().any(|s| s.id.starts_with("php-") && actif(&s.id));
         let web_actif = actif(NGINX) || actif(APACHE);
+        // MariaDB : instances inutiles arrêtées, nouvelles démarrées (si MariaDB tournait).
+        if states.iter().any(|s| est_mariadb(&s.id) && actif(&s.id)) {
+            let st = Stack::new(&self.paths, settings, installed);
+            let voulues: std::collections::HashSet<String> = st.mariadb_needed().into_iter().map(|p| st.mariadb_instance(p)).collect();
+            for s in states.iter().filter(|s| est_mariadb(&s.id) && !voulues.contains(&s.id)) {
+                self.supervisor.stop(&s.id).await?;
+            }
+            self.start(Group::Mariadb, settings, installed).await?;
+        }
         if !php_actif && !web_actif {
             return Ok(());
         }
@@ -250,7 +284,7 @@ impl Orchestrator {
             states.iter().any(|s| pred(&s.id) && !matches!(s.state, ServiceState::Arrete | ServiceState::Erreur { .. }))
         };
         let mut g = Vec::new();
-        if actif(&|id| id == MARIADB) {
+        if actif(&|id| est_mariadb(id)) {
             g.push(Group::Mariadb);
         }
         if actif(&|id| id.starts_with("php-")) {
@@ -312,7 +346,12 @@ impl Orchestrator {
         let web = web_software(settings);
         let web_pkg = stack.pick(web, version_wanted(settings, web)).ok();
         let php_pkg = stack.default_php();
-        let db_pkg = stack.pick(MARIADB, settings.versions.mariadb.as_deref()).ok();
+        let db_pkg = stack.default_mariadb().ok();
+        let instances: Vec<Instance> = stack
+            .mariadb_needed()
+            .into_iter()
+            .map(|p| Instance { id: stack.mariadb_instance(p), version: p.version.clone(), port: stack.mariadb_port(p), defaut: stack.mariadb_instance(p) == MARIADB })
+            .collect();
 
         // Toutes les versions de PHP utilisées (défaut + sites).
         let php_needed = stack.php_needed();
@@ -331,6 +370,7 @@ impl Orchestrator {
                 members: members_of(&|id| id == NGINX || id == APACHE),
                 state: ServiceState::Arrete,
                 log_file: logs.join(format!("{web}-error.log")).display().to_string(),
+                instances: vec![],
             },
             GroupView {
                 group: Group::Php,
@@ -350,16 +390,26 @@ impl Orchestrator {
                 },
                 state: ServiceState::Arrete,
                 log_file: php_pkg.map(|p| logs.join(format!("php-{}-error.log", p.version)).display().to_string()).unwrap_or_default(),
+                instances: vec![],
             },
             GroupView {
                 group: Group::Mariadb,
                 software: MARIADB.into(),
-                version: db_pkg.map(|p| p.version.clone()),
+                version: (!instances.is_empty()).then(|| instances.iter().map(|i| i.version.clone()).collect::<Vec<_>>().join(", ")),
                 installed: db_pkg.is_some(),
-                ports: vec![settings.ports.mariadb],
-                members: members_of(&|id| id == MARIADB),
+                ports: instances.iter().map(|i| i.port).collect(),
+                members: {
+                    let mut m = members_of(&|id| est_mariadb(id));
+                    for i in &instances {
+                        if !m.iter().any(|s| s.id == i.id) {
+                            m.push(StatusEvent { id: i.id.clone(), state: ServiceState::Arrete });
+                        }
+                    }
+                    m
+                },
                 state: ServiceState::Arrete,
                 log_file: logs.join("mariadb-error.log").display().to_string(),
+                instances,
             },
         ]
         .into_iter()

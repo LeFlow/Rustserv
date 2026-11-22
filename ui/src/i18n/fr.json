@@ -58,7 +58,8 @@
     "appliquer_maintenant": "Redémarrer maintenant",
     "adminer": "Gérer les bases",
     "adminer_ouverture": "Ouverture…",
-    "adminer_aide": "Ouvre Adminer dans le navigateur, déjà connecté à MariaDB (installé et démarré automatiquement si besoin). Accessible depuis ce PC uniquement."
+    "adminer_aide": "Ouvre Adminer dans le navigateur, déjà connecté à MariaDB (installé et démarré automatiquement si besoin). Accessible depuis ce PC uniquement.",
+    "par_defaut": "par défaut"
   },
   "php": {
     "rechercher": "Rechercher des mises à jour",
@@ -156,7 +157,12 @@
     "wp_fix_en_cours": "Adaptation…",
     "wp_fix_aide": "Fait pointer ce site WordPress vers son domaine actuel (base de données et wp-config.php). À utiliser après un import ou un changement de domaine.",
     "wp_fix_ok": "{site} : adresses converties de {de} vers {vers}.",
-    "wp_fix_rien": "{site} utilise déjà {url} : rien à changer."
+    "wp_fix_rien": "{site} utilise déjà {url} : rien à changer.",
+    "db_aide": "Version de MariaDB du site (par exemple celle de la production). Changer de version copie la base du site vers la nouvelle (l'ancienne est conservée) et met à jour wp-config.php / .env.",
+    "db_en_cours": "Copie de la base…",
+    "db_deplacee": "{site} : base « {base} » copiée de MariaDB {de} vers {vers} (port {port}). L'ancienne copie est conservée.",
+    "db_sans_base": "{site} utilise maintenant MariaDB {vers} (aucune base détectée dans sa configuration).",
+    "db_inchange": "{site} : version de MariaDB inchangée."
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",

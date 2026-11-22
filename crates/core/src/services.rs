@@ -340,21 +340,107 @@ impl<'a> Stack<'a> {
     }
 }
 
-impl Stack<'_> {
+impl<'a> Stack<'a> {
     /// Dossier de données MariaDB : un par branche (12.3, 11.4…), car une
     /// montée de version majeure nécessite une migration (mariadb-upgrade).
     pub fn mariadb_datadir(&self, pkg: &InstalledPackage) -> PathBuf {
         self.paths.data().join(format!("mariadb-{}", version::branch(&pkg.version)))
     }
 
-    /// Génère `etc/mariadb/my.ini`, initialise le dossier de données au premier
-    /// lancement (`mariadb-install-db`) et renvoie la spec.
+    // ------------------------------------------------------------ MariaDB multi-versions
+    //
+    // Comme pour PHP, on raisonne par **branche** (« 11.4 ») : chaque branche a son dossier
+    // de données (`data/mariadb-11.4`), son port et son service. L'instance **par défaut**
+    // garde le port des réglages (3306) et le nom de service historique « mariadb ».
+
+    /// MariaDB par défaut (celle qui contient les données si aucun choix explicite).
+    pub fn default_mariadb(&self) -> Result<&'a InstalledPackage> {
+        self.pick(MARIADB, self.settings.versions.mariadb.as_deref())
+    }
+
+    /// Version installée la plus récente d'une branche de MariaDB.
+    pub fn mariadb_for_branch(&self, branch: &str) -> Option<&'a InstalledPackage> {
+        self.installed
+            .iter()
+            .filter(|p| p.package == MARIADB && version::branch(&p.version) == branch)
+            .max_by(|a, b| version::cmp(&a.version, &b.version))
+    }
+
+    /// MariaDB d'un site : son choix s'il est installé, sinon la version par défaut.
+    pub fn site_mariadb(&self, site: &str) -> Result<&'a InstalledPackage> {
+        match self.settings.site_mariadb.get(site).and_then(|b| self.mariadb_for_branch(&version::branch(b))) {
+            Some(p) => Ok(p),
+            None => self.default_mariadb(),
+        }
+    }
+
+    fn est_defaut(&self, pkg: &InstalledPackage) -> bool {
+        self.default_mariadb().is_ok_and(|d| version::branch(&d.version) == version::branch(&pkg.version))
+    }
+
+    /// Port d'une instance : celui des réglages pour la version par défaut, sinon
+    /// « 3 » + majeure + mineure sur deux chiffres (11.4 → 31104, 10.11 → 31011).
+    pub fn mariadb_port(&self, pkg: &InstalledPackage) -> u16 {
+        if self.est_defaut(pkg) {
+            return self.settings.ports.mariadb;
+        }
+        let (n, _) = version::parse(&pkg.version);
+        (30000 + n.first().copied().unwrap_or(0) * 100 + n.get(1).copied().unwrap_or(0).min(99)) as u16
+    }
+
+    /// Nom de l'instance (service, journaux, dossier temporaire) : « mariadb » ou « mariadb-11.4 ».
+    pub fn mariadb_instance(&self, pkg: &InstalledPackage) -> String {
+        if self.est_defaut(pkg) { MARIADB.to_string() } else { format!("{MARIADB}-{}", version::branch(&pkg.version)) }
+    }
+
+    /// Versions de MariaDB nécessaires : la version par défaut + celles des sites existants.
+    pub fn mariadb_needed(&self) -> Vec<&'a InstalledPackage> {
+        let mut v: Vec<&InstalledPackage> = self.default_mariadb().into_iter().collect();
+        if let Ok(sites) = sites::discover(self.paths, &self.settings.tld) {
+            for s in sites {
+                if let Ok(p) = self.site_mariadb(&s.name) {
+                    if !v.iter().any(|x| version::branch(&x.version) == version::branch(&p.version)) {
+                        v.push(p);
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    /// Client `mariadb.exe` d'une instance.
+    pub fn mariadb_client(&self, pkg: &InstalledPackage) -> Result<PathBuf> {
+        let bin = pkg.path.join("bin");
+        ["mariadb", "mysql"]
+            .iter()
+            .map(|n| bin.join(platform::exe_name(n)))
+            .find(|p| p.is_file())
+            .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadb")) })
+    }
+
+    /// Spec de la MariaDB par défaut.
     pub fn mariadb(&self) -> Result<ServiceSpec> {
-        let pkg = self.pick(MARIADB, self.settings.versions.mariadb.as_deref())?;
+        self.mariadb_spec(self.default_mariadb()?)
+    }
+
+    /// Specs de toutes les instances nécessaires.
+    pub fn mariadb_specs(&self) -> Result<Vec<ServiceSpec>> {
+        self.mariadb_needed().into_iter().map(|p| self.mariadb_spec(p)).collect()
+    }
+
+    /// Génère `etc/mariadb/my.ini` (défaut) ou `etc/mariadb/my-<branche>.ini`, initialise le
+    /// dossier de données au premier lancement (`mariadb-install-db`) et renvoie la spec.
+    pub fn mariadb_spec(&self, pkg: &InstalledPackage) -> Result<ServiceSpec> {
         let bin = pkg.path.join("bin");
         let datadir = self.mariadb_datadir(pkg);
-        let conf = self.paths.etc().join("mariadb").join("my.ini");
-        mkdir(&self.paths.tmp().join("mariadb"))?;
+        let instance = self.mariadb_instance(pkg);
+        let port = self.mariadb_port(pkg);
+        let conf = if instance == MARIADB {
+            self.paths.etc().join("mariadb").join("my.ini")
+        } else {
+            self.paths.etc().join("mariadb").join(format!("my-{}.ini", version::branch(&pkg.version)))
+        };
+        mkdir(&self.paths.tmp().join(&instance))?;
 
         // Exécutable serveur : « mariadbd » (récent) ou « mysqld » (anciennes versions).
         let server = ["mariadbd", "mysqld"]
@@ -364,23 +450,24 @@ impl Stack<'_> {
             .ok_or_else(|| Error::ExecutableIntrouvable { chemin: bin.join(platform::exe_name("mariadbd")) })?;
 
         if !datadir.join("mysql").is_dir() {
-            self.mariadb_init(pkg, &bin, &datadir)?;
+            self.mariadb_init(pkg, &bin, &datadir, port)?;
         }
 
         let ctx = serde_json::json!({
+            "instance": instance,
             "server_dir": slash(&pkg.path),
             "datadir": slash(&datadir),
-            "port": self.settings.ports.mariadb,
+            "port": port,
             "logs": slash(&self.paths.logs()),
             "tmp": slash(&self.paths.tmp()),
         });
         write(&conf, &templates::render(self.paths, templates::MY_INI, ctx)?)?;
 
-        let mut s = ServiceSpec::new(MARIADB, &server, self.paths.logs().join("mariadb.log"));
+        let mut s = ServiceSpec::new(&instance, &server, self.paths.logs().join(format!("{instance}.log")));
         // --defaults-file doit être le premier argument.
         s.args = vec![format!("--defaults-file={}", slash(&conf))];
         s.cwd = pkg.path.clone();
-        s.ports = vec![self.settings.ports.mariadb];
+        s.ports = vec![port];
         // mariadbd (Windows) surveille l'événement « MySQLShutdown<pid> » : arrêt propre,
         // indispensable pour ne pas abîmer les bases.
         s.stop = StopStrategy::NamedEvent("MySQLShutdown{pid}".into());
@@ -390,7 +477,7 @@ impl Stack<'_> {
     }
 
     /// Crée le dossier de données (utilisateur root sans mot de passe, accès local uniquement).
-    fn mariadb_init(&self, pkg: &InstalledPackage, bin: &Path, datadir: &Path) -> Result<()> {
+    fn mariadb_init(&self, pkg: &InstalledPackage, bin: &Path, datadir: &Path, port: u16) -> Result<()> {
         let exe = ["mariadb-install-db", "mysql_install_db"]
             .iter()
             .map(|n| bin.join(platform::exe_name(n)))
@@ -400,7 +487,7 @@ impl Stack<'_> {
         if let Some(parent) = datadir.parent() {
             mkdir(parent)?;
         }
-        let args = vec![format!("--datadir={}", datadir.display()), format!("--port={}", self.settings.ports.mariadb)];
+        let args = vec![format!("--datadir={}", datadir.display()), format!("--port={port}")];
         if let Err(e) = check_config(MARIADB, &exe, &args, &pkg.path) {
             // Un dossier à moitié créé bloquerait les essais suivants.
             let _ = std::fs::remove_dir_all(datadir);
@@ -475,6 +562,32 @@ mod tests {
         // … sauf si une version est épinglée pour la branche.
         settings.php_pins.insert("8.3".into(), "8.3.9".into());
         assert_eq!(Stack::new(&paths, &settings, &installed).default_php().unwrap().version, "8.3.9");
+    }
+
+    #[test]
+    fn mariadb_par_site_ports_et_instances() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = Paths::new(t.path());
+        paths.ensure_layout().unwrap();
+        for s in ["prod", "neuf"] {
+            std::fs::create_dir_all(paths.www().join(s)).unwrap();
+        }
+        let installed = vec![pkg("mariadb", "12.3.4", t.path()), pkg("mariadb", "11.4.14", t.path()), pkg("mariadb", "10.11.15", t.path())];
+        let mut settings = Settings::default();
+        settings.versions.mariadb = Some("12.3.4".into());
+        settings.site_mariadb.insert("prod".into(), "11.4".into());
+        settings.site_mariadb.insert("disparu".into(), "10.11".into());
+        let st = Stack::new(&paths, &settings, &installed);
+
+        assert_eq!(st.site_mariadb("prod").unwrap().version, "11.4.14");
+        assert_eq!(st.site_mariadb("neuf").unwrap().version, "12.3.4");
+        let needed: Vec<_> = st.mariadb_needed().iter().map(|p| p.version.clone()).collect();
+        assert_eq!(needed, ["12.3.4", "11.4.14"], "10.11 n'est utilisée par aucun site existant");
+        assert_eq!(st.mariadb_port(&installed[0]), 3306);
+        assert_eq!(st.mariadb_port(&installed[1]), 31104);
+        assert_eq!(st.mariadb_port(&installed[2]), 31011);
+        assert_eq!(st.mariadb_instance(&installed[0]), "mariadb");
+        assert_eq!(st.mariadb_instance(&installed[1]), "mariadb-11.4");
     }
 
     #[test]

@@ -8,9 +8,9 @@ datadir="{{ datadir }}"
 port={{ port }}
 # Accessible uniquement depuis cette machine.
 bind-address=127.0.0.1
-log-error="{{ logs }}/mariadb-error.log"
-pid-file="{{ tmp }}/mariadb/mariadb.pid"
-tmpdir="{{ tmp }}/mariadb"
+log-error="{{ logs }}/{{ instance }}-error.log"
+pid-file="{{ tmp }}/{{ instance }}/mariadb.pid"
+tmpdir="{{ tmp }}/{{ instance }}"
 
 character-set-server=utf8mb4
 collation-server=utf8mb4_unicode_ci

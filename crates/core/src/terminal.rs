@@ -47,7 +47,16 @@ impl Stack<'_> {
             }
         }
         // Outils facultatifs : la version la plus récente installée.
-        for (pkg, sous) in [("composer", ""), ("mariadb", "bin"), ("nodejs", "")] {
+        // Client MariaDB de la version du site (ou par défaut).
+        let mariadb = match &site {
+            Some(s) => self.site_mariadb(&s.name).ok(),
+            None => self.default_mariadb().ok(),
+        };
+        if let Some(m) = mariadb {
+            prefix.push(m.path.join("bin"));
+            vars.push(("MYSQL_TCP_PORT".into(), self.mariadb_port(m).to_string()));
+        }
+        for (pkg, sous) in [("composer", ""), ("nodejs", "")] {
             if let Some(p) = self.installed.iter().filter(|p| p.package == pkg).max_by(|a, b| version::cmp(&a.version, &b.version)) {
                 prefix.push(if sous.is_empty() { p.path.clone() } else { p.path.join(sous) });
             }

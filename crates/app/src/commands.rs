@@ -281,7 +281,7 @@ pub async fn settings_save(state: State<'_, AppState>, settings: Settings) -> Re
 /// « Gérer les bases » : installe Adminer si besoin, démarre MariaDB et le serveur
 /// web s'ils sont arrêtés (ou recharge sa configuration), puis renvoie l'adresse d'Adminer.
 #[tauri::command]
-pub async fn adminer_open(state: State<'_, AppState>) -> Result<String> {
+pub async fn adminer_open(state: State<'_, AppState>, port: Option<u16>) -> Result<String> {
     use rustserv_core::orchestrator::Group;
     let mut nouveau = false;
     if !state.installer.installed()?.iter().any(|p| p.package == "adminer") {
@@ -311,8 +311,12 @@ pub async fn adminer_open(state: State<'_, AppState>) -> Result<String> {
     if !actifs.contains(&Group::Web) {
         state.orchestrator.start(Group::Web, &settings, &installed).await?;
     }
-    let port = settings.ports.http;
-    Ok(if port == 80 { "http://localhost/adminer/".into() } else { format!("http://localhost:{port}/adminer/") })
+    let http = settings.ports.http;
+    let base = if http == 80 { "http://localhost/adminer/".to_string() } else { format!("http://localhost:{http}/adminer/") };
+    Ok(match port {
+        Some(p) if p != settings.ports.mariadb => format!("{base}?port={p}"),
+        _ => base,
+    })
 }
 
 /// Un redémarrage est-il nécessaire pour appliquer des réglages ?

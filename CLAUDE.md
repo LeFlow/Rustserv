@@ -181,6 +181,23 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
 - Test réel `import_laragon_et_wamp_reel` : agence-web (Laragon, MySQL 8.4) et claude (WAMP, MySQL 9.1,
   localhost/claude → claude.test, page WordPress 200) — utilise les vraies installations, en lecture.
 
+## MariaDB multi-versions (par site)
+
+- Comme PHP : choix par **branche** (`settings.site_mariadb` : site → « 11.4 »). Chaque branche a son
+  dossier de données (`data/mariadb-<branche>`), son instance et son port. Instance **par défaut** :
+  service `mariadb`, port des réglages (3306), `etc/mariadb/my.ini`, `logs/mariadb-error.log`.
+  Autres : service `mariadb-<branche>`, port « 3 + majeure + mineure » (11.4 → 31104, 10.11 → 31011),
+  `etc/mariadb/my-<branche>.ini`, journaux/tmp nommés d'après l'instance (variable `instance` du gabarit).
+- `Stack::mariadb_needed` = défaut + versions des sites existants ; seules celles-ci démarrent
+  (`Group::Mariadb`), `apply` arrête les instances devenues inutiles.
+- Changer la MariaDB d'un site (`site_set_mariadb`) : les deux instances démarrent
+  (`Orchestrator::ensure_mariadb`), `migration::run::deplacer_base` copie la base (mariadb-dump de
+  la source → import ; refus si la base existe déjà dans la cible ; repli collations `uca1400`/`0900`),
+  puis `configurer_port` met à jour DB_HOST (wp-config) / DB_PORT (.env). L'ancienne base est conservée.
+- Adminer : `?port=31104` pour se connecter à une autre instance. Terminal : client MariaDB de la
+  version du site + `MYSQL_TCP_PORT`. Import Laragon/WAMP : version MariaDB choisissable par site.
+- Test réel : `mariadb_multi_versions_par_site` (`target/pile-mariadb`, 12.3 → 11.4).
+
 ## Catalogue (`catalog/catalog.json`)
 
 - Schéma 1. SHA256 **obligatoire**, URLs **https** obligatoires, `mirrors` essayés dans l'ordre.

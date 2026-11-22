@@ -31,6 +31,9 @@ pub struct ImportItem {
     pub php: Option<String>,
     /// WordPress : convertir les adresses vers <nom>.<tld>.
     pub convertir_url: bool,
+    /// Branche de MariaDB du site (« 11.4 ») ; None = MariaDB par défaut.
+    #[serde(default)]
+    pub mariadb: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -254,7 +257,7 @@ impl Cible {
             if ok {
                 return Ok(());
             }
-            if essai == 0 && err.contains("collation") && err.contains("0900") {
+            if essai == 0 && err.to_lowercase().contains("collation") {
                 tracing::warn!(base, "collation MySQL 8 inconnue, conversion de l'export");
                 let txt = std::fs::read_to_string(fichier).map_err(|e| Error::fichier(fichier, e))?;
                 let txt = convertir_collations(&txt);
@@ -269,7 +272,9 @@ impl Cible {
 
 /// Remplace les collations MySQL 8 par leurs équivalents MariaDB.
 pub fn convertir_collations(sql: &str) -> String {
-    sql.replace("utf8mb4_0900_ai_ci", "utf8mb4_unicode_520_ci")
+    sql.replace("utf8mb4_uca1400_ai_ci", "utf8mb4_unicode_520_ci")
+        .replace("utf8mb4_uca1400_as_cs", "utf8mb4_bin")
+        .replace("utf8mb4_0900_ai_ci", "utf8mb4_unicode_520_ci")
         .replace("utf8mb4_0900_as_ci", "utf8mb4_unicode_520_ci")
         .replace("utf8mb4_0900_as_cs", "utf8mb4_bin")
         .replace("utf8mb4_0900_bin", "utf8mb4_bin")
@@ -391,11 +396,23 @@ pub async fn importer(
     let travail = paths.tmp().join("migration");
     std::fs::create_dir_all(&travail).map_err(|e| Error::fichier(&travail, e))?;
     let installed = installer.installed()?;
-    let stack = Stack::new(paths, settings, &installed);
-    let mariadb = stack.pick("mariadb", settings.versions.mariadb.as_deref())?;
-    let client = ["mariadb.exe", "mysql.exe"].iter().map(|n| mariadb.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB introuvable"))?;
-    let cible = Cible { client, port: settings.ports.mariadb };
-    let mut prises = cible.bases().await?;
+    // Choix de MariaDB de chaque site pris en compte dès maintenant (port de l'instance).
+    let mut avec_choix = settings.clone();
+    for i in items {
+        if let Some(b) = &i.mariadb {
+            avec_choix.site_mariadb.insert(i.nom.clone(), b.clone());
+        }
+    }
+    let stack = Stack::new(paths, &avec_choix, &installed);
+    let mut cibles: std::collections::HashMap<String, (Cible, Vec<String>)> = std::collections::HashMap::new();
+    for i in items {
+        let pkg = stack.site_mariadb(&i.nom)?;
+        if !cibles.contains_key(&pkg.version) {
+            let c = Cible { client: stack.mariadb_client(pkg)?, port: stack.mariadb_port(pkg) };
+            let prises = c.bases().await?;
+            cibles.insert(pkg.version.clone(), (c, prises));
+        }
+    }
 
     // 1. Exports, serveur par serveur (une seule copie temporaire par serveur).
     let mut exports: Vec<(String, PathBuf)> = Vec::new();
@@ -436,13 +453,18 @@ pub async fn importer(
     let mut nouveaux = settings.clone();
     let mut resultats = Vec::new();
     for item in items {
-        let r = importer_site(paths, &nouveaux, installer, catalog, &cible, &mut prises, item, &exports, &erreurs_export, https, on).await;
+        let version_db = stack.site_mariadb(&item.nom)?.version.clone();
+        let (cible, prises) = cibles.get_mut(&version_db).expect("cible MariaDB préparée");
+        let r = importer_site(paths, &nouveaux, installer, catalog, cible, prises, item, &exports, &erreurs_export, https, on).await;
         match r {
             Ok(mut res) => {
                 if let Some(b) = &item.php {
                     if stack.php_for_branch(b).is_some() {
                         nouveaux.site_php.insert(item.nom.clone(), b.clone());
                     }
+                }
+                if let Some(b) = &item.mariadb {
+                    nouveaux.site_mariadb.insert(item.nom.clone(), b.clone());
                 }
                 on(Progression { site: item.nom.clone(), etape: Etape::Termine, detail: String::new() });
                 res.ok = true;
@@ -629,13 +651,73 @@ pub async fn adapter_site(
     }
     let installed = installer.installed()?;
     let stack = Stack::new(paths, settings, &installed);
-    let mariadb = stack.pick("mariadb", settings.versions.mariadb.as_deref())?;
-    let client = ["mariadb.exe", "mysql.exe"].iter().map(|n| mariadb.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB introuvable"))?;
-    let cible = Cible { client, port: settings.ports.mariadb };
+    let mariadb = stack.site_mariadb(site)?;
+    let cible = Cible { client: stack.mariadb_client(mariadb)?, port: stack.mariadb_port(mariadb) };
     let nouvelle = format!("{}://{site}.{}", if https { "https" } else { "http" }, settings.tld);
     let php = stack.site_php(site).map(|p| version::branch(&p.version));
     let ancienne = adapter_adresses(paths, settings, installer, catalog, &cible, &dest, php.as_deref(), &nouvelle).await?;
     Ok((ancienne, nouvelle))
+}
+
+/// Base de données utilisée par un site (wp-config.php ou .env).
+pub fn base_du_site(dossier: &Path) -> Option<String> {
+    if let Ok(t) = std::fs::read_to_string(dossier.join("wp-config.php")) {
+        return wp_define(&t, "DB_NAME");
+    }
+    std::fs::read_to_string(dossier.join(".env")).ok().and_then(|t| super::detect::env_value(&t, "DB_DATABASE"))
+}
+
+/// Fait pointer la configuration d'un site (wp-config.php / .env) vers le port donné.
+pub fn configurer_port(dossier: &Path, port: u16) -> Result<()> {
+    let wpc = dossier.join("wp-config.php");
+    if let Ok(t) = std::fs::read_to_string(&wpc) {
+        let hote = if port == 3306 { "127.0.0.1".to_string() } else { format!("127.0.0.1:{port}") };
+        std::fs::write(&wpc, set_wp_define(&t, "DB_HOST", &hote)).map_err(|e| Error::fichier(&wpc, e))?;
+    }
+    let env = dossier.join(".env");
+    if let Ok(t) = std::fs::read_to_string(&env) {
+        if super::detect::env_value(&t, "DB_DATABASE").is_some() {
+            let t = set_env(&set_env(&t, "DB_HOST", "127.0.0.1"), "DB_PORT", &port.to_string());
+            std::fs::write(&env, t).map_err(|e| Error::fichier(&env, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copie la base d'un site d'une instance MariaDB vers une autre (les deux doivent tourner),
+/// puis met à jour la configuration du site. L'ancienne base est **conservée**.
+/// Renvoie le nom de la base copiée (None si le site n'a pas de base).
+pub async fn deplacer_base(
+    paths: &Paths,
+    dossier: &Path,
+    source: &InstalledPackage,
+    port_source: u16,
+    cible_pkg: &InstalledPackage,
+    port_cible: u16,
+) -> Result<Option<String>> {
+    let Some(base) = base_du_site(dossier) else {
+        configurer_port(dossier, port_cible)?;
+        return Ok(None);
+    };
+    let client_cible = ["mariadb.exe", "mysql.exe"].iter().map(|n| cible_pkg.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB introuvable"))?;
+    let cible = Cible { client: client_cible, port: port_cible };
+    if cible.bases().await?.contains(&base) {
+        return Err(echec(format!(
+            "la base « {base} » existe déjà dans MariaDB {} : supprimez-la (Adminer) ou renommez-la avant de déplacer le site",
+            cible_pkg.version
+        )));
+    }
+    let serveur = DbServer { label: format!("MariaDB {}", source.version), bin: source.path.join("bin"), data: PathBuf::new(), mariadb: true, bases: vec![] };
+    let travail = paths.tmp().join("migration");
+    std::fs::create_dir_all(&travail).map_err(|e| Error::fichier(&travail, e))?;
+    let fichier = travail.join(format!("deplacement-{base}.sql"));
+    exporter(&serveur, port_source, &base, &fichier).await?;
+    let res = cible.importer(&base, &fichier).await;
+    let _ = std::fs::remove_file(&fichier);
+    res?;
+    configurer_port(dossier, port_cible)?;
+    tracing::info!(base, de = %source.version, vers = %cible_pkg.version, "base déplacée");
+    Ok(Some(base))
 }
 
 /// Remplace les adresses avec WP-CLI (gère les données sérialisées).

@@ -10,6 +10,7 @@
 mod commands;
 mod compat_commands;
 mod ext_commands;
+mod mariadb_commands;
 mod migration_commands;
 mod php_commands;
 mod site_commands;
@@ -55,6 +56,8 @@ fn main() {
             migration_commands::migration_detect,
             migration_commands::migration_run,
             migration_commands::site_wp_fix,
+            mariadb_commands::mariadb_versions,
+            mariadb_commands::site_set_mariadb,
             php_commands::php_overview,
             php_commands::php_set_default,
             php_commands::php_pin,

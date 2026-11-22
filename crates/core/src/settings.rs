@@ -58,6 +58,8 @@ pub struct Settings {
     pub site_php: BTreeMap<String, String>,
     /// Version épinglée par branche (« 8.3 » → « 8.3.36 »). Absent = la plus récente installée.
     pub php_pins: BTreeMap<String, String>,
+    /// Branche de MariaDB choisie par site (nom du site → « 11.4 »). Absent = MariaDB par défaut.
+    pub site_mariadb: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             timezone: "Europe/Paris".into(),
             site_php: BTreeMap::new(),
             php_pins: BTreeMap::new(),
+            site_mariadb: BTreeMap::new(),
         }
     }
 }

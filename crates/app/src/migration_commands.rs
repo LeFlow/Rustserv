@@ -24,6 +24,21 @@ pub async fn migration_run(app: AppHandle, state: State<'_, AppState>, items: Ve
     if !state.orchestrator.running_groups().contains(&Group::Mariadb) {
         state.orchestrator.start(Group::Mariadb, &settings, &installed).await?;
     }
+    // Instances MariaDB choisies pour les sites importés : démarrées avant l'import.
+    let mut avec_choix = settings.clone();
+    for i in &items {
+        if let Some(b) = &i.mariadb {
+            avec_choix.site_mariadb.insert(i.nom.clone(), b.clone());
+        }
+    }
+    {
+        let st = rustserv_core::services::Stack::new(&state.paths, &avec_choix, &installed);
+        let mut vues = std::collections::HashSet::new();
+        let pkgs: Vec<_> = items.iter().filter_map(|i| i.mariadb.as_ref()).filter_map(|b| st.mariadb_for_branch(b).cloned()).filter(|p| vues.insert(p.version.clone())).collect();
+        for p in pkgs {
+            state.orchestrator.ensure_mariadb(&avec_choix, &installed, &p).await?;
+        }
+    }
     let detection = detect::detect(&state.paths, &settings, &detect::racines_standard());
     let catalog = state.catalog.read().map_err(|e| Error::Interne(e.to_string()))?.clone();
     let https = ssl::status(&state.paths).map(|s| s.ca.is_some() && s.installee).unwrap_or(false);

@@ -92,6 +92,7 @@ export interface GroupView {
   state: EtatService;
   members: StatusEvent[];
   log_file: string;
+  instances: { id: string; version: string; port: number; defaut: boolean }[];
 }
 
 // ------------------------------------------------------------ réglages
@@ -154,6 +155,15 @@ export interface SiteView {
   php_missing: boolean;
   local_url: string;
   wordpress: boolean;
+  mariadb_choice: string | null;
+  mariadb_version: string | null;
+}
+
+export interface MariadbVersion {
+  branch: string;
+  version: string;
+  port: number;
+  defaut: boolean;
 }
 
 // ------------------------------------------------------------ extensions
@@ -299,6 +309,7 @@ export interface ImportItem {
   base: string | null;
   php: string | null;
   convertir_url: boolean;
+  mariadb: string | null;
 }
 
 export interface ResultatImport {
@@ -372,7 +383,10 @@ export const api = {
   startAll: () => invoke<void>("services_start_all"),
   stopAll: () => invoke<void>("services_stop_all"),
   restartAll: () => invoke<Groupe[]>("services_restart_all"),
-  adminerOpen: () => invoke<string>("adminer_open"),
+  adminerOpen: (port: number | null = null) => invoke<string>("adminer_open", { port }),
+  mariadbVersions: () => invoke<MariadbVersion[]>("mariadb_versions"),
+  siteSetMariadb: (site: string, branch: string | null) =>
+    invoke<{ base: string | null; de: string; vers: string; port: number }>("site_set_mariadb", { site, branch }),
   restartPending: () => invoke<boolean>("services_restart_pending"),
   serviceLog: (group: Groupe) => invoke<string>("service_log", { group }),
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>

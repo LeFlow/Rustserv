@@ -74,11 +74,11 @@
   }
 
   /** Ouvre Adminer (installé et services démarrés automatiquement si besoin). */
-  async function gererBases() {
+  async function gererBases(port: number | null = null) {
     erreur = null;
     occupe.adminer = true;
     try {
-      await openUrl(await api.adminerOpen());
+      await openUrl(await api.adminerOpen(port));
     } catch (e) {
       erreur = tErreur(e);
     } finally {
@@ -175,9 +175,24 @@
       </div>
     {/if}
 
+    {#if g.group === "mariadb" && g.instances.length > 1}
+      <!-- Une ligne par instance (MariaDB multi-versions), avec son accès Adminer. -->
+      <div class="pool">
+        {#each g.instances as i (i.id)}
+          {@const m = g.members.find((x) => x.id === i.id)}
+          <span class="version-pool">
+            <span class="pastille petite {m?.state.etat ?? 'arrete'}"></span>
+            <span class="mono">MariaDB {i.version}</span>
+            <span class="muted">· port {i.port}{i.defaut ? ` · ${t("services.par_defaut")}` : ""}</span>
+            {#if !i.defaut}<button class="lien" disabled={occupe.adminer} onclick={() => gererBases(i.port)}>🗄 Adminer</button>{/if}
+          </span>
+        {/each}
+      </div>
+    {/if}
+
     {#if g.group === "mariadb" && g.installed}
       <div class="bas">
-        <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={gererBases}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
+        <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={() => gererBases()}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
       </div>
     {/if}
 

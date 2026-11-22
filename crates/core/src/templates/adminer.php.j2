@@ -16,7 +16,9 @@ function adminer_object()
 
         function credentials()
         {
-            return ['127.0.0.1:{{ port }}', 'root', ''];
+            // Instance choisie dans l'URL (?server=127.0.0.1:31104), sinon celle par défaut.
+            $serveur = isset($_GET['server']) && $_GET['server'] !== '' ? $_GET['server'] : '127.0.0.1:{{ port }}';
+            return [$serveur, 'root', ''];
         }
 
         // Le MariaDB de développement n'a pas de mot de passe : connexion acceptée.
@@ -34,11 +36,16 @@ function adminer_object()
     return new AdminerRustserv();
 }
 
-// Première visite (ou après déconnexion) : connexion automatique.
+// Première visite (ou après déconnexion) : connexion automatique, à l'instance
+// demandée par ?port=31104 (MariaDB multi-versions) ou à celle par défaut.
 if (!isset($_GET['username']) && empty($_POST)) {
+    $port = isset($_GET['port']) ? (int) $_GET['port'] : {{ port }};
+    if ($port < 1024 || $port > 65535) {
+        $port = {{ port }};
+    }
     $_POST['auth'] = [
         'driver' => 'server',
-        'server' => '127.0.0.1:{{ port }}',
+        'server' => '127.0.0.1:' . $port,
         'username' => 'root',
         'password' => '',
         'db' => '',

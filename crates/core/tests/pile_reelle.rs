@@ -663,7 +663,7 @@ async fn import_laragon_et_wamp_reel() {
     println!("à importer : {} → {} (base {:?}), {} → {} (base {:?})", lar.nom, lar.nom_propose, lar.base, wamp.nom, wamp.nom_propose, wamp.base);
     let items: Vec<ImportItem> = [&lar, &wamp]
         .iter()
-        .map(|s| ImportItem { source: s.source, dossier: s.dossier.clone(), nom: s.nom_propose.clone(), type_site: s.type_site, base: s.base.clone(), php: Some("8.3".into()), convertir_url: true })
+        .map(|s| ImportItem { source: s.source, dossier: s.dossier.clone(), nom: s.nom_propose.clone(), type_site: s.type_site, base: s.base.clone(), php: Some("8.3".into()), convertir_url: true, mariadb: None })
         .collect();
     for i in &items {
         let _ = std::fs::remove_dir_all(paths.www().join(&i.nom));
@@ -743,6 +743,86 @@ async fn import_laragon_et_wamp_reel() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&restants.stdout).trim(), "0", "serveur MySQL temporaire orphelin");
+}
+
+/// MariaDB multi-versions : un site passe de la 12.3 (défaut) à la 11.4, sa base suit.
+#[tokio::test]
+#[ignore]
+async fn mariadb_multi_versions_par_site() {
+    use rustserv_core::catalog::remote;
+    use rustserv_core::migration::run::deplacer_base;
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    use rustserv_core::process::ServiceState;
+    let paths = Paths::new(racine().with_file_name("pile-mariadb"));
+    paths.ensure_layout().unwrap();
+    let mut cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    // MariaDB 11.4 : version prise sur mariadb.org (comme le fait la recherche de mises à jour).
+    let t = remote::fetch_all(inst.client()).await;
+    let r114: Vec<_> = t.releases.iter().filter(|(p, r)| p == "mariadb" && r.version.starts_with("11.4.")).map(|(_, r)| r.clone()).collect();
+    cat.merge("mariadb", r114).unwrap();
+    installe(&inst, &cat, "mariadb", Some("12.3")).await;
+    installe(&inst, &cat, "mariadb", Some("11.4")).await;
+    installe(&inst, &cat, "php", Some("8.3")).await;
+    let installed = inst.installed().unwrap();
+
+    let site = paths.www().join("prod-copie");
+    std::fs::create_dir_all(&site).unwrap();
+    std::fs::write(site.join("wp-config.php"), "<?php
+define( 'DB_NAME', 'prodcopie' );
+define( 'DB_HOST', '127.0.0.1' );
+").unwrap();
+    let mut settings = Settings::default();
+    settings.ports.mariadb = libre();
+    settings.versions.mariadb = Some(cat.latest("mariadb", Some("12.3")).unwrap().version.clone());
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    orch.start(Group::Mariadb, &settings, &installed).await.unwrap_or_else(|e| panic!("{e}"));
+
+    // Données dans la MariaDB par défaut.
+    let st = Stack::new(&paths, &settings, &installed);
+    let src = st.site_mariadb("prod-copie").unwrap().clone();
+    let client = st.mariadb_client(&src).unwrap();
+    let sql = |client: &std::path::Path, port: u16, q: &str| {
+        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "-N", "-B", "-e", q]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    sql(&client, settings.ports.mariadb, "DROP DATABASE IF EXISTS prodcopie; CREATE DATABASE prodcopie; CREATE TABLE prodcopie.t (id INT PRIMARY KEY, nom VARCHAR(20)) COLLATE utf8mb4_uca1400_ai_ci; INSERT INTO prodcopie.t VALUES (1,'élément');");
+
+    // Le site passe en 11.4.
+    let mut nouveau = settings.clone();
+    nouveau.site_mariadb.insert("prod-copie".into(), "11.4".into());
+    let n = Stack::new(&paths, &nouveau, &installed);
+    let dst = n.site_mariadb("prod-copie").unwrap().clone();
+    assert!(dst.version.starts_with("11.4."));
+    let port_dst = orch.ensure_mariadb(&nouveau, &installed, &dst).await.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(port_dst, 31104);
+    let _ = sql(&n.mariadb_client(&dst).unwrap(), port_dst, "DROP DATABASE IF EXISTS prodcopie");
+    let base = deplacer_base(&paths, &site, &src, settings.ports.mariadb, &dst, port_dst).await.unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(base.as_deref(), Some("prodcopie"));
+    let v = sql(&n.mariadb_client(&dst).unwrap(), port_dst, "SELECT CONCAT(VERSION(), ' | ', nom) FROM prodcopie.t");
+    println!("dans la 11.4 : {v}");
+    assert!(v.starts_with("11.4.") && v.ends_with("élément"), "{v}");
+    let wpc = std::fs::read_to_string(site.join("wp-config.php")).unwrap();
+    assert!(wpc.contains("'127.0.0.1:31104'"), "{wpc}");
+    assert!(sql(&client, settings.ports.mariadb, "SHOW DATABASES LIKE 'prodcopie'").contains("prodcopie"), "l'ancienne base doit être conservée");
+
+    // Les deux instances tournent ; la vue Services les liste.
+    orch.apply(&nouveau, &installed).await.unwrap();
+    let vue = orch.overview(&nouveau, &installed);
+    let db = vue.iter().find(|g| g.software == "mariadb").unwrap();
+    println!("instances : {:?}", db.instances.iter().map(|i| format!("{} {} :{}", i.id, i.version, i.port)).collect::<Vec<_>>());
+    assert_eq!(db.instances.len(), 2);
+    assert!(db.members.iter().all(|m| matches!(m.state, ServiceState::EnCours { .. })), "{:?}", db.members);
+
+    // PHP se connecte avec le DB_HOST du site.
+    let php = installed.iter().find(|p| p.package == "php").unwrap();
+    let ini = rustserv_core::php::ensure_php_ini(&paths, &php.path, &php.version, &nouveau).unwrap();
+    let o = std::process::Command::new(php.path.join("php.exe")).arg("-c").arg(&ini).arg("-r")
+        .arg("$m = new mysqli('127.0.0.1', 'root', '', 'prodcopie', 31104); echo $m->server_info;").output().unwrap();
+    println!("PHP → {}", String::from_utf8_lossy(&o.stdout));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("11.4."));
+    orch.supervisor().stop_all().await;
 }
 
 fn libre() -> u16 {
