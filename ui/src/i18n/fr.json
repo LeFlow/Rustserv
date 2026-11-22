@@ -151,7 +151,12 @@
     "https_actif": "HTTPS actif",
     "https_ca": "Autorité : {nom}",
     "https_desactiver": "Désactiver le HTTPS",
-    "https_desactive": "HTTPS désactivé et autorité retirée de Windows."
+    "https_desactive": "HTTPS désactivé et autorité retirée de Windows.",
+    "wp_fix": "Adapter les adresses",
+    "wp_fix_en_cours": "Adaptation…",
+    "wp_fix_aide": "Fait pointer ce site WordPress vers son domaine actuel (base de données et wp-config.php). À utiliser après un import ou un changement de domaine.",
+    "wp_fix_ok": "{site} : adresses converties de {de} vers {vers}.",
+    "wp_fix_rien": "{site} utilise déjà {url} : rien à changer."
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
@@ -173,7 +178,7 @@
       "internal": "Réservé par l'ICANN (2024) aux réseaux privés : il ne sera jamais attribué sur Internet.",
       "lan": "Usage courant sur les réseaux domestiques mais non officiel : peut entrer en conflit avec votre box."
     },
-    "enregistre_domaine": "Domaine modifié : configurations et certificats HTTPS mis à jour. Il reste à déclarer les nouveaux domaines dans Windows.",
+    "enregistre_domaine": "Domaine modifié : configurations et certificats HTTPS mis à jour. Il reste à déclarer les nouveaux domaines dans Windows. Les sites WordPress mémorisent leur adresse : utilisez « Adapter les adresses » sur chacun d'eux dans la page Sites.",
     "aller_sites": "Mettre à jour les domaines dans la page Sites",
     "application": "Application…",
     "enregistre_simple": "Réglages enregistrés.",

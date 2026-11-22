@@ -38,3 +38,23 @@ pub async fn migration_run(app: AppHandle, state: State<'_, AppState>, items: Ve
     state.orchestrator.apply(&nouveaux, &installed).await?;
     Ok(resultats)
 }
+
+#[derive(serde::Serialize)]
+pub struct AdressesWp {
+    ancienne: Option<String>,
+    nouvelle: String,
+}
+
+/// Fait pointer un site WordPress vers son domaine actuel (base + wp-config.php).
+#[tauri::command]
+pub async fn site_wp_fix(state: State<'_, AppState>, site: String) -> Result<AdressesWp> {
+    let settings = state.settings();
+    if !state.orchestrator.running_groups().contains(&Group::Mariadb) {
+        let installed = state.installer.installed()?;
+        state.orchestrator.start(Group::Mariadb, &settings, &installed).await?;
+    }
+    let catalog = state.catalog.read().map_err(|e| Error::Interne(e.to_string()))?.clone();
+    let https = ssl::status(&state.paths).map(|s| s.ca.is_some() && s.installee).unwrap_or(false);
+    let (ancienne, nouvelle) = run::adapter_site(&state.paths, &settings, &state.installer, &catalog, &site, https).await?;
+    Ok(AdressesWp { ancienne, nouvelle })
+}

@@ -682,6 +682,13 @@ async fn import_laragon_et_wamp_reel() {
         assert!(r.ok, "{} : {:?}", r.nom, r.erreur);
     }
     assert_eq!(nouveaux.site_php.get(&items[0].nom).map(String::as_str), Some("8.3"));
+    // Les constantes WP_HOME/WP_SITEURL (prioritaires sur la base) doivent suivre.
+    for i in &items {
+        let wpc = std::fs::read_to_string(paths.www().join(&i.nom).join("wp-config.php")).unwrap();
+        if let Some(h) = rustserv_core::migration::detect::wp_define(&wpc, "WP_HOME") {
+            assert_eq!(h, format!("http://{}.test", i.nom), "{} : WP_HOME non converti", i.nom);
+        }
+    }
 
     // Le site WAMP converti doit répondre sur son nouveau domaine, sans renvoyer vers localhost.
     let installed = inst.installed().unwrap();
@@ -700,6 +707,34 @@ async fn import_laragon_et_wamp_reel() {
             assert!(!corps.contains("Error establishing a database connection"), "{host} : connexion à la base impossible");
         }
     }
+    // Changement de domaine puis « Adapter les adresses » sur agence-web.
+    let mut autre = nouveaux.clone();
+    autre.tld = "localhost".into();
+    let (avant, apres) = rustserv_core::migration::run::adapter_site(&paths, &autre, &inst, &cat, &items[0].nom, false).await.unwrap_or_else(|e| panic!("{e}"));
+    println!("adapter : {avant:?} → {apres}");
+    assert_eq!(apres, format!("http://{}.localhost", items[0].nom));
+    assert!(avant.is_some());
+    let wpc = std::fs::read_to_string(paths.www().join(&items[0].nom).join("wp-config.php")).unwrap();
+    assert!(!wpc.contains(".test'"), "wp-config.php pointe encore vers .test");
+    // La base doit être cohérente avec wp-config.php.
+    let mariadb = inst.installed().unwrap().into_iter().find(|p| p.package == "mariadb").unwrap();
+    let base = rustserv_core::migration::detect::wp_define(&wpc, "DB_NAME").unwrap();
+    let out = std::process::Command::new(mariadb.path.join("bin").join("mariadb.exe"))
+        .args(["--host=127.0.0.1", &format!("--port={}", autre.ports.mariadb), "--user=root", "-N", "-B", "-e"])
+        .arg(format!("SELECT option_value FROM `{base}`.wp_options WHERE option_name IN ('siteurl','home')"))
+        .output()
+        .unwrap();
+    let valeurs = String::from_utf8_lossy(&out.stdout);
+    println!("base : {}", valeurs.replace('\n', " "));
+    assert!(valeurs.lines().all(|l| l.trim() == apres), "siteurl/home en base : {valeurs}");
+    orch.stop(Group::Php).await.unwrap();
+    orch.start(Group::Web, &autre, &installed).await.unwrap();
+    let c = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let r = c.get(format!("http://127.0.0.1:{}/", autre.ports.http)).header("Host", format!("{}.localhost", items[0].nom)).send().await.unwrap();
+    let lieu = r.headers().get("location").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
+    println!("après adaptation : {} {lieu}", r.status());
+    assert!(!lieu.contains(".test"), "redirige encore vers l'ancien domaine : {lieu}");
+
     orch.supervisor().stop_all().await;
     // Aucun serveur temporaire ne doit survivre (processus « moniteur » de MySQL 8+).
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;

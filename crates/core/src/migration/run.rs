@@ -6,7 +6,7 @@
 //!   temporairement sur un port libre avec le MySQL de l'outil d'origine ;
 //! - un site en erreur n'interrompt pas les autres.
 
-use super::detect::{DbServer, Source, SourceKind, TypeSite};
+use super::detect::{wp_define, DbServer, Source, SourceKind, TypeSite};
 use crate::catalog::{version, Catalog, InstalledPackage, Installer};
 use crate::error::{Error, Result};
 use crate::paths::Paths;
@@ -519,25 +519,11 @@ async fn importer_site(
             t = set_wp_define(&t, "DB_USER", "root");
             t = set_wp_define(&t, "DB_PASSWORD", "");
             t = set_wp_define(&t, "DB_HOST", &host);
-            let prefix = table_prefix(&t);
             std::fs::write(&f, &t).map_err(|e| Error::fichier(&f, e))?;
 
-            if let (true, Some(b)) = (item.convertir_url, &res.base) {
-                let ancienne = cible
-                    .sql(&format!("SELECT option_value FROM `{b}`.`{prefix}options` WHERE option_name='siteurl'"))
-                    .await?
-                    .trim()
-                    .to_string();
-                res.ancienne_url = Some(ancienne.clone());
-                if !ancienne.is_empty() && ancienne.trim_end_matches('/') != nouvelle_url {
-                    etape(Etape::Adresses, format!("{ancienne} → {nouvelle_url}"));
-                    convertir_wordpress(paths, settings, installer, catalog, item, &dest, &ancienne, &nouvelle_url).await?;
-                    let (_, chemin) = hote_et_chemin(&ancienne);
-                    let ht = dest.join(".htaccess");
-                    if let Ok(h) = std::fs::read_to_string(&ht) {
-                        let _ = std::fs::write(&ht, corriger_htaccess(&h, &chemin));
-                    }
-                }
+            if item.convertir_url && res.base.is_some() {
+                etape(Etape::Adresses, nouvelle_url.clone());
+                res.ancienne_url = adapter_adresses(paths, settings, installer, catalog, cible, &dest, item.php.as_deref(), &nouvelle_url).await?;
                 res.nouvelle_url = Some(nouvelle_url);
             }
         }
@@ -567,14 +553,99 @@ async fn importer_site(
     Ok(res)
 }
 
-/// Remplace les adresses avec WP-CLI (gère les données sérialisées) puis fixe siteurl/home.
+/// Fait pointer un site WordPress vers `nouvelle` (ex. https://monsite.test) :
+/// - adresses en base (WP-CLI, données sérialisées comprises), depuis l'adresse en base
+///   **et** celle des constantes `WP_HOME`/`WP_SITEURL` si elles diffèrent ;
+/// - constantes `WP_HOME`/`WP_SITEURL` de wp-config.php (elles priment sur la base) ;
+/// - .htaccess d'une ancienne installation en sous-dossier.
+/// Renvoie l'ancienne adresse (None si déjà à jour).
+#[allow(clippy::too_many_arguments)]
+async fn adapter_adresses(
+    paths: &Paths,
+    settings: &Settings,
+    installer: &Installer,
+    catalog: &Catalog,
+    cible: &Cible,
+    dest: &Path,
+    php_branche: Option<&str>,
+    nouvelle: &str,
+) -> Result<Option<String>> {
+    let f = dest.join("wp-config.php");
+    let mut t = std::fs::read_to_string(&f).map_err(|e| Error::fichier(&f, e))?;
+    let base = wp_define(&t, "DB_NAME").ok_or_else(|| echec("DB_NAME absent de wp-config.php"))?;
+    let prefix = table_prefix(&t);
+    let en_base = cible
+        .sql(&format!("SELECT option_value FROM `{base}`.`{prefix}options` WHERE option_name='siteurl'"))
+        .await?
+        .trim()
+        .to_string();
+    let constante = wp_define(&t, "WP_HOME");
+    let mut anciennes: Vec<String> = [Some(en_base.clone()), constante.clone()]
+        .into_iter()
+        .flatten()
+        .map(|u| u.trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty() && u != nouvelle)
+        .collect();
+    anciennes.dedup();
+    if anciennes.is_empty() {
+        return Ok(None);
+    }
+    // Constantes d'abord : WordPress lit l'« ancienne » valeur de siteurl via WP_SITEURL ;
+    // sinon `option update` ne modifie aucune ligne (base déjà convertie) et échoue.
+    for cle in ["WP_HOME", "WP_SITEURL"] {
+        if wp_define(&t, cle).is_some() {
+            t = set_wp_define(&t, cle, nouvelle);
+        }
+    }
+    std::fs::write(&f, &t).map_err(|e| Error::fichier(&f, e))?;
+    for ancienne in &anciennes {
+        convertir_wordpress(paths, settings, installer, catalog, php_branche, dest, ancienne, nouvelle).await?;
+        let (_, chemin) = hote_et_chemin(ancienne);
+        let ht = dest.join(".htaccess");
+        if let Ok(h) = std::fs::read_to_string(&ht) {
+            let _ = std::fs::write(&ht, corriger_htaccess(&h, &chemin));
+        }
+    }
+    // siteurl/home fixés directement en SQL (via WP-CLI, la constante WP_SITEURL fausse la comparaison).
+    let v = nouvelle.replace('\\', "\\\\").replace('\'', "\\'");
+    cible.sql(&format!("UPDATE `{base}`.`{prefix}options` SET option_value='{v}' WHERE option_name IN ('siteurl','home')")).await?;
+    Ok(anciennes.into_iter().next())
+}
+
+/// Adapte les adresses d'un site WordPress **déjà présent** dans Rustserv au domaine actuel
+/// (après un import ou un changement de domaine). MariaDB doit être démarré.
+/// Renvoie (ancienne adresse si changée, nouvelle adresse).
+pub async fn adapter_site(
+    paths: &Paths,
+    settings: &Settings,
+    installer: &Installer,
+    catalog: &Catalog,
+    site: &str,
+    https: bool,
+) -> Result<(Option<String>, String)> {
+    let dest = paths.www().join(site);
+    if !dest.join("wp-config.php").is_file() {
+        return Err(echec(format!("« {site} » n'est pas un site WordPress")));
+    }
+    let installed = installer.installed()?;
+    let stack = Stack::new(paths, settings, &installed);
+    let mariadb = stack.pick("mariadb", settings.versions.mariadb.as_deref())?;
+    let client = ["mariadb.exe", "mysql.exe"].iter().map(|n| mariadb.path.join("bin").join(n)).find(|p| p.is_file()).ok_or_else(|| echec("client MariaDB introuvable"))?;
+    let cible = Cible { client, port: settings.ports.mariadb };
+    let nouvelle = format!("{}://{site}.{}", if https { "https" } else { "http" }, settings.tld);
+    let php = stack.site_php(site).map(|p| version::branch(&p.version));
+    let ancienne = adapter_adresses(paths, settings, installer, catalog, &cible, &dest, php.as_deref(), &nouvelle).await?;
+    Ok((ancienne, nouvelle))
+}
+
+/// Remplace les adresses avec WP-CLI (gère les données sérialisées).
 #[allow(clippy::too_many_arguments)]
 async fn convertir_wordpress(
     paths: &Paths,
     settings: &Settings,
     installer: &Installer,
     catalog: &Catalog,
-    item: &ImportItem,
+    php_branche: Option<&str>,
     dest: &Path,
     ancienne: &str,
     nouvelle: &str,
@@ -582,7 +653,7 @@ async fn convertir_wordpress(
     let wp = outil(installer, catalog, "wp-cli").await?;
     let installed = installer.installed()?;
     let stack = Stack::new(paths, settings, &installed);
-    let php = item.php.as_deref().and_then(|b| stack.php_for_branch(b)).or_else(|| stack.default_php()).ok_or_else(|| Error::AucuneVersion { id: "php".into() })?;
+    let php = php_branche.and_then(|b| stack.php_for_branch(b)).or_else(|| stack.default_php()).ok_or_else(|| Error::AucuneVersion { id: "php".into() })?;
     let ini = crate::php::ensure_php_ini(paths, &php.path, &php.version, settings)?;
     let base_args = |extra: &[&str]| -> Vec<String> {
         let mut a = vec!["-c".into(), ini.display().to_string(), wp.path.join("wp.phar").display().to_string(), format!("--path={}", dest.display())];
@@ -601,12 +672,6 @@ async fn convertir_wordpress(
     for (a, b) in &paires {
         let args = base_args(&["search-replace", a, b, "--all-tables-with-prefix", "--skip-columns=guid", "--precise"]);
         let (ok, _, err) = executer(&exe, &args, None, 1800).await?;
-        if !ok {
-            return Err(echec(format!("WP-CLI : {}", err.trim())));
-        }
-    }
-    for opt in ["siteurl", "home"] {
-        let (ok, _, err) = executer(&exe, &base_args(&["option", "update", opt, nouvelle]), None, 300).await?;
         if !ok {
             return Err(echec(format!("WP-CLI : {}", err.trim())));
         }

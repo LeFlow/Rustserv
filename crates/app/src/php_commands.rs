@@ -187,6 +187,8 @@ pub struct SiteView {
     php_missing: bool,
     /// Adresse utilisable tout de suite (avant la gestion des domaines .test).
     local_url: String,
+    /// Site WordPress (wp-config.php présent).
+    wordpress: bool,
 }
 
 #[tauri::command]
@@ -208,6 +210,7 @@ pub fn sites_list(state: State<'_, AppState>) -> Result<Vec<SiteView>> {
                 host: s.host,
                 dir: s.dir.display().to_string(),
                 root: s.root.display().to_string(),
+                wordpress: s.dir.join("wp-config.php").is_file(),
                 php_choice: choice,
                 php_missing: missing,
                 name: s.name,

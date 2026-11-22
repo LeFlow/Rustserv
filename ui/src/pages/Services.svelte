@@ -152,9 +152,6 @@
         {:else}
           <button class="primaire" disabled={occupe[g.group]} onclick={() => action(g.group, api.serviceStart)}>▶ {t("actions.demarrer")}</button>
         {/if}
-        {#if g.group === "mariadb" && g.installed}
-          <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={gererBases}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
-        {/if}
         <button class="lien" onclick={() => basculerJournal(g.group)}>{journaux[g.group] == null ? t("services.voir_journal") : t("services.masquer_journal")}</button>
       </div>
     </div>
@@ -175,6 +172,12 @@
           </span>
         {/each}
         <span class="muted">{t("services.pool")}</span>
+      </div>
+    {/if}
+
+    {#if g.group === "mariadb" && g.installed}
+      <div class="bas">
+        <button disabled={occupe.adminer} title={t("services.adminer_aide")} onclick={gererBases}>🗄 {occupe.adminer ? t("services.adminer_ouverture") : t("services.adminer")}</button>
       </div>
     {/if}
 
@@ -200,7 +203,8 @@
   .pastille.demarrage, .pastille.arret { background: #eab308; animation: clignote 1s infinite; }
   .pastille.erreur { background: var(--danger); }
   @keyframes clignote { 50% { opacity: 0.4; } }
-  .pool { display: flex; gap: 10px; align-items: center; margin: 10px 0 0 26px; font-size: 12px; }
+  .pool { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin: 10px 0 0 26px; font-size: 12px; }
+  .bas { display: flex; justify-content: flex-end; margin-top: 8px; }
   .version-pool { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; }
   .version-pool .mono { margin-right: 4px; }
   .erreur { color: var(--danger); white-space: pre-wrap; font-family: inherit; margin: 10px 0 0; }

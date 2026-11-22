@@ -172,6 +172,12 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   inconnue. wp-config.php / .env adaptés (copie `*.avant-rustserv`). Conversion : WP-CLI
   `search-replace //ancien //nouveau` (+ variante JSON `\/\/`), `option update siteurl/home`,
   .htaccess RewriteBase corrigé. Refus si Laragon/WAMP tourne encore (ports 80/443/3306/3307).
+- ⚠ WordPress : les constantes `WP_HOME`/`WP_SITEURL` de wp-config.php **priment sur la base**.
+  `adapter_adresses` les met à jour **avant** la base (sinon WordPress compare avec l'ancienne
+  constante), convertit depuis l'adresse en base ET celle de la constante, puis fixe
+  siteurl/home en SQL. `adapter_site` (bouton « Adapter les adresses » de la page Sites) refait
+  cette conversion vers le domaine actuel : à utiliser après un changement de domaine.
+- http://localhost/<site>/ ne convient pas à WordPress (une seule adresse canonique).
 - Test réel `import_laragon_et_wamp_reel` : agence-web (Laragon, MySQL 8.4) et claude (WAMP, MySQL 9.1,
   localhost/claude → claude.test, page WordPress 200) — utilise les vraies installations, en lecture.
 

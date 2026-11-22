@@ -153,6 +153,12 @@
             <button class="lien" onclick={() => openUrl(s.local_url)}>localhost ↗</button>
           </td>
           <td class="actions">
+            {#if s.wordpress}
+              <button title={t("sites.wp_fix_aide")} disabled={occupe["wp-" + s.name]} onclick={() => executer("wp-" + s.name, async () => {
+                const r = await api.siteWpFix(s.name);
+                return r.ancienne ? t("sites.wp_fix_ok", { site: s.name, de: r.ancienne, vers: r.nouvelle }) : t("sites.wp_fix_rien", { site: s.name, url: r.nouvelle });
+              })}>🔧 {occupe["wp-" + s.name] ? t("sites.wp_fix_en_cours") : t("sites.wp_fix")}</button>
+            {/if}
             <button onclick={() => terminal(s)}>&gt;_ {t("sites.terminal")}</button>
             <button class="lien" title={s.dir} onclick={() => api.openPath(s.dir).catch((e) => (erreur = tErreur(e)))}>📁</button>
           </td>

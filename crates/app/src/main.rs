@@ -52,6 +52,7 @@ fn main() {
             commands::adminer_open,
             migration_commands::migration_detect,
             migration_commands::migration_run,
+            migration_commands::site_wp_fix,
             php_commands::php_overview,
             php_commands::php_set_default,
             php_commands::php_pin,

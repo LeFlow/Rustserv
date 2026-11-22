@@ -144,6 +144,7 @@ export interface SiteView {
   php_version: string | null;
   php_missing: boolean;
   local_url: string;
+  wordpress: boolean;
 }
 
 // ------------------------------------------------------------ extensions
@@ -308,6 +309,7 @@ export interface ProgressionImport {
 
 export const api = {
   migrationDetect: () => invoke<Detection>("migration_detect"),
+  siteWpFix: (site: string) => invoke<{ ancienne: string | null; nouvelle: string }>("site_wp_fix", { site }),
   migrationRun: (items: ImportItem[]) => invoke<ResultatImport[]>("migration_run", { items }),
   onMigration: (cb: (p: ProgressionImport) => void): Promise<UnlistenFn> =>
     listen<ProgressionImport>("migration-progress", (e) => cb(e.payload)),
