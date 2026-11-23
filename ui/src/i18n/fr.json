@@ -160,8 +160,8 @@
     "wp_fix_aide": "Fait pointer ce site WordPress vers son domaine actuel (base de données et wp-config.php). À utiliser après un import ou un changement de domaine.",
     "wp_fix_ok": "{site} : adresses converties de {de} vers {vers}.",
     "wp_fix_rien": "{site} utilise déjà {url} : rien à changer.",
-    "db_aide": "Base de données du site (par exemple celle de la production). Entre MariaDB et MySQL, la base est copiée (l'ancienne est conservée). Vers ou depuis PostgreSQL, une base vide du même nom est créée : les données ne peuvent pas être converties automatiquement. wp-config.php / .env sont mis à jour.",
-    "db_en_cours": "Copie de la base…",
+    "db_aide": "Base de données vers laquelle migrer le site. Le bouton « Migrer » s'active quand elle diffère de la base actuelle.",
+    "db_en_cours": "Migration…",
     "db_deplacee": "{site} : base « {base} » copiée de {de} vers {vers} (port {port}). L'ancienne copie est conservée.",
     "db_sans_base": "{site} utilise maintenant {vers} (aucune base détectée dans sa configuration).",
     "db_inchange": "{site} : base de données inchangée.",
@@ -169,7 +169,20 @@
     "ouvrir_menu": "Ouvrir",
     "ouvrir_dossier": "Ouvrir le dossier du site",
     "col_base": "Base de données",
-    "db_vide": "{site} utilise maintenant {vers} (port {port}) : base « {base} » créée vide, l'ancienne est conservée. Importez vos données ou relancez les migrations (php artisan migrate)."
+    "db_vide": "{site} utilise maintenant {vers} (port {port}) : base « {base} » créée vide, l'ancienne est conservée. Importez vos données ou relancez les migrations (php artisan migrate).",
+    "migrer": "Migrer",
+    "annuler": "Annuler",
+    "fermer": "Fermer",
+    "migrer_titre": "Migrer la base de « {site} »",
+    "migrer_copie": "La base du site sera copiée telle quelle (tables, données, procédures), puis wp-config.php / .env pointeront vers la nouvelle instance.",
+    "migrer_conversion": "La base sera convertie vers l'autre moteur : tables, données, clés et index. Les vues, procédures et déclencheurs ne se convertissent pas automatiquement : le rapport les listera. Puis .env pointera vers la nouvelle instance.",
+    "migrer_conserve": "La base d'origine n'est ni modifiée ni supprimée : vous pouvez revenir en arrière à tout moment.",
+    "db_convertie": "{site} : base « {base} » convertie de {de} vers {vers} (port {port}). L'ancienne base est conservée.",
+    "rapport_titre": "Conversion de « {site} » : {de} → {vers}",
+    "rapport_resume": "{tables} table(s), {lignes} ligne(s) converties en {secondes} s.",
+    "rapport_avertissements": "Points à vérifier :",
+    "rapport_parfait": "Tout a été converti, sans point d'attention.",
+    "rapport_tables": "Détail par table"
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",
@@ -316,7 +329,9 @@
       "source_active": "{source} est encore en marche. Quittez-le complètement (icône près de l'horloge → Quitter) puis relancez l'import : ses données ne doivent pas être en cours d'utilisation."
     },
     "base": {
-      "wordpress_postgresql": "« {site} » est un site WordPress : WordPress ne fonctionne qu'avec MariaDB ou MySQL, pas avec PostgreSQL."
+      "wordpress_postgresql": "« {site} » est un site WordPress : WordPress ne fonctionne qu'avec MariaDB ou MySQL, pas avec PostgreSQL.",
+      "cible_non_vide": "La base « {base} » existe déjà dans {moteur} et contient des tables : supprimez-la (Adminer) ou renommez-la avant de migrer le site. Rien n'a été modifié.",
+      "conversion": "La conversion de la base a échoué. La base d'origine n'a pas été modifiée.\n{detail}"
     }
   },
   "terminal": {
@@ -434,5 +449,23 @@
       "erreur": "Erreur :"
     },
     "col_base_cible": "Base"
+  },
+  "conversion": {
+    "avert": {
+      "dates_zero": "{table}.{colonne} : {n} date(s) « 0000-00-00 » remplacée(s) par une valeur vide (NULL) — cette date n'existe pas dans PostgreSQL.",
+      "type_inconnu": "{table}.{colonne} : le type « {type} » n'a pas d'équivalent exact, les données sont conservées telles quelles.",
+      "index_ignore": "{table} : l'index {type} « {index} » n'a pas été converti.",
+      "defaut_ignore": "{table}.{colonne} : la valeur par défaut « {defaut} » n'a pas été reprise.",
+      "sans_cle_primaire": "{table} : la table n'a pas de clé primaire.",
+      "caractere_nul": "{table}.{colonne} : {n} texte(s) contenaient un caractère nul, refusé par PostgreSQL et retiré.",
+      "index_impossible": "{table} : l'index « {index} » n'a pas pu être créé ({detail}).",
+      "cle_etrangere_impossible": "{table} : la clé étrangère « {cle} » n'a pas pu être créée, souvent à cause de lignes orphelines ({detail})."
+    },
+    "non_convertis": {
+      "vues": "Vues à recréer à la main : {liste}",
+      "procedures": "Procédures / fonctions à réécrire : {liste}",
+      "declencheurs": "Déclencheurs (triggers) à réécrire : {liste}",
+      "evenements": "Événements planifiés à recréer : {liste}"
+    }
   }
 }

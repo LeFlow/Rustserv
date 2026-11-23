@@ -17,6 +17,9 @@ dependencies:
   '@xterm/xterm':
     specifier: ^6.0.0
     version: 6.0.0
+  simple-icons:
+    specifier: '16'
+    version: 16.38.1
 
 devDependencies:
   '@sveltejs/vite-plugin-svelte':
@@ -800,6 +803,11 @@ packages:
     dependencies:
       mri: 1.2.0
     dev: true
+
+  /simple-icons@16.38.1:
+    resolution: {integrity: sha512-q4JnGp1cgeASp4jzEsmSh/7BD/e2y7aYO8XST+QBEvOJ5wzZ/9WRmKsI+QUwkfPUSiXC+sfh2+QetD38zl3N0g==}
+    engines: {node: '>=0.12.18'}
+    dev: false
 
   /source-map-js@1.2.4:
     resolution: {integrity: sha512-J7ZjMvHd9O1fcT/5V09QWaaSl2BbWx3F6O08spde82Namf9UB0GxRVIPiNbVsdKkoizHiSpTodo3vp2bAy91MA==}

@@ -55,21 +55,32 @@ pub struct Deplacement {
     de: String,
     vers: String,
     port: u16,
-    /// Les données ont été copiées (même famille) ; sinon une base vide a été créée.
+    /// Les données ont été copiées (MariaDB ↔ MySQL ou autre version).
     copiee: bool,
+    /// Conversion MariaDB / MySQL ↔ PostgreSQL : tables, lignes, points d'attention.
+    rapport: Option<rustserv_core::conversion::RapportConversion>,
 }
 
-/// Choisit la base d'un site (« mysql:8.4 », None = par défaut).
-/// - MariaDB ↔ MySQL (ou autre version) : la base est **copiée** (l'ancienne est conservée) ;
-/// - vers / depuis PostgreSQL : une base **vide** du même nom est créée (pas de conversion) ;
-/// puis la configuration du site (wp-config.php / .env) pointe vers la nouvelle instance.
+/// Migre la base d'un site vers une autre instance (« mysql:8.4 », None = base par défaut).
+/// - MariaDB ↔ MySQL (ou autre version) : la base est **copiée** ;
+/// - vers / depuis PostgreSQL : la base est **convertie**, données comprises ;
+/// l'ancienne base est toujours conservée, puis la configuration du site (wp-config.php /
+/// .env) pointe vers la nouvelle instance.
 #[tauri::command]
 pub async fn site_set_base(state: State<'_, AppState>, site: String, choix: Option<String>) -> Result<Deplacement> {
     let ancien = state.settings();
     let mut nouveau = ancien.clone();
-    let c = choix.as_deref().and_then(ChoixBase::parse);
-    nouveau.set_choix_base(&site, c.as_ref());
     let installed = state.installer.installed()?;
+    let mut c = choix.as_deref().and_then(ChoixBase::parse);
+    // Choisir explicitement la base par défaut = revenir au défaut (sinon cette branche,
+    // devenue « choisie pour un site », ne serait plus la version par défaut).
+    if let (Some(ch), Ok(defaut)) = (&c, Stack::new(&state.paths, &ancien, &installed).default_site_db()) {
+        let m = Stack::moteur_de(defaut);
+        if ch.moteur == m && ch.branche == m.branche(&defaut.version) {
+            c = None;
+        }
+    }
+    nouveau.set_choix_base(&site, c.as_ref());
     let (src, dst, port_dst) = {
         let a = Stack::new(&state.paths, &ancien, &installed);
         let n = Stack::new(&state.paths, &nouveau, &installed);
@@ -82,6 +93,7 @@ pub async fn site_set_base(state: State<'_, AppState>, site: String, choix: Opti
     let dossier = state.paths.www().join(&site);
     let mut base = None;
     let mut copiee = false;
+    let mut rapport = None;
     let meme_instance = ms == md && ms.branche(&src.version) == md.branche(&dst.version);
     if dossier.is_dir() {
         if meme_instance {
@@ -95,9 +107,24 @@ pub async fn site_set_base(state: State<'_, AppState>, site: String, choix: Opti
             if md == Moteur::Postgresql && dossier.join("wp-config.php").is_file() {
                 return Err(Error::WordpressPostgresql { site });
             }
+            let port_src = state.orchestrator.ensure_db(&ancien, &installed, &src).await?;
             state.orchestrator.ensure_db(&nouveau, &installed, &dst).await?;
-            let client = Stack::new(&state.paths, &nouveau, &installed).db_client(&dst)?;
-            base = run::changer_de_moteur(&dossier, &site, &client, &dst, port_dst).await?;
+            let (cs, cd) = {
+                let st = Stack::new(&state.paths, &nouveau, &installed);
+                (st.db_client(&src)?, st.db_client(&dst)?)
+            };
+            let php = rustserv_core::conversion::php_pour_conversion(&installed)?.clone();
+            let (b, r) = run::changer_de_moteur(
+                &state.paths,
+                &dossier,
+                &site,
+                &php,
+                &run::Instance { pkg: &src, client: cs, port: port_src },
+                &run::Instance { pkg: &dst, client: cd, port: port_dst },
+            )
+            .await?;
+            base = b;
+            rapport = r;
             if md == Moteur::Postgresql {
                 // Laravel / Symfony : extensions PostgreSQL du PHP du site.
                 crate::ext_commands::activer_pgsql(&state, &nouveau, &installed, Some(&site)).await;
@@ -113,5 +140,6 @@ pub async fn site_set_base(state: State<'_, AppState>, site: String, choix: Opti
         vers: format!("{} {}", md.nom(), dst.version),
         port: port_dst,
         copiee,
+        rapport,
     })
 }

@@ -8,7 +8,8 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, nomMoteur, type BaseVersion, type HostsStatus, type PhpVersionView, type SiteView, type SslStatus } from "../lib/api";
+  import { api, nomMoteur, type BaseVersion, type HostsStatus, type PhpVersionView, type RapportConversion, type SiteView, type SslStatus } from "../lib/api";
+  import LogoSite from "../components/LogoSite.svelte";
   import { nouveauTerminal } from "../lib/terminaux.svelte";
   import Import from "./Import.svelte";
 
@@ -35,12 +36,38 @@
     openUrl(url);
   }
 
-  /** Change la base d'un site : copiée entre MariaDB et MySQL, base vide créée vers / depuis PostgreSQL. */
-  function choisirBase(s: SiteView, valeur: string) {
+  // ------------------------------------------------------------ migration de base
+  /** Base cible choisie dans la liste, par site (par défaut : la base actuelle). */
+  let cibles = $state<Record<string, string>>({});
+  /** Migration en attente de confirmation. */
+  let confirmation = $state<{ site: SiteView; cible: BaseVersion } | null>(null);
+  /** Rapport de la dernière conversion vers / depuis PostgreSQL. */
+  let rapport = $state<{ site: string; de: string; vers: string; r: RapportConversion } | null>(null);
+
+  const libelleBase = (choix: string | null) => {
+    const b = bases.find((x) => x.choix === choix);
+    return b ? `${nomMoteur(b.moteur)} ${b.branch}` : (choix ?? "—");
+  };
+  const moteurDe = (choix: string | null) => choix?.split(":")[0] ?? null;
+  /** Changement de famille (MariaDB / MySQL ↔ PostgreSQL) : conversion des données. */
+  const estConversion = (s: SiteView, cible: BaseVersion) => (moteurDe(s.db_actuel) === "postgresql") !== (cible.moteur === "postgresql");
+
+  function demanderMigration(s: SiteView) {
+    const cible = bases.find((b) => b.choix === cibles[s.name]);
+    if (cible && cible.choix !== s.db_actuel) confirmation = { site: s, cible };
+  }
+
+  function migrer() {
+    if (!confirmation) return;
+    const { site: s, cible } = confirmation;
+    confirmation = null;
+    rapport = null;
     executer("db-" + s.name, async () => {
-      const r = await api.siteSetBase(s.name, valeur === "" ? null : valeur);
+      const r = await api.siteSetBase(s.name, cible.choix);
+      if (r.rapport) rapport = { site: s.name, de: r.de, vers: r.vers, r: r.rapport };
       if (r.de === r.vers) return t("sites.db_inchange", { site: s.name });
       if (r.copiee) return t("sites.db_deplacee", { site: s.name, base: r.base ?? "", de: r.de, vers: r.vers, port: r.port });
+      if (r.rapport) return t("sites.db_convertie", { site: s.name, base: r.base ?? "", de: r.de, vers: r.vers, port: r.port });
       if (r.base) return t("sites.db_vide", { site: s.name, base: r.base, vers: r.vers, port: r.port });
       return t("sites.db_sans_base", { site: s.name, vers: r.vers });
     });
@@ -51,6 +78,8 @@
       const [s, php, h, c, r, m] = await Promise.all([api.sitesList(), api.phpOverview(), api.hostsStatus(), api.sslStatus(), api.settingsGet(), api.basesVersions()]);
       bases = m;
       sites = s;
+      // Chaque liste revient sur la base actuelle du site.
+      cibles = Object.fromEntries(s.map((x) => [x.name, x.db_actuel ?? ""]));
       branches = php.versions.filter((v) => v.active).map((v) => v.branch);
       defaut = php.versions.find((v) => v.default) ?? null;
       hosts = h;
@@ -143,12 +172,56 @@
   </div>
 {/if}
 
+{#if rapport}
+  <!-- Rapport de conversion vers / depuis PostgreSQL. -->
+  <section class="carte rapport">
+    <div class="rapport-tete">
+      <strong>{t("sites.rapport_titre", { site: rapport.site, de: rapport.de, vers: rapport.vers })}</strong>
+      <button class="lien" onclick={() => (rapport = null)}>✕ {t("sites.fermer")}</button>
+    </div>
+    <p>{t("sites.rapport_resume", { tables: rapport.r.tables.length, lignes: rapport.r.tables.reduce((n, x) => n + x.lignes, 0), secondes: rapport.r.secondes })}</p>
+    {#if rapport.r.avertissements.length}
+      <p class="avert">{t("sites.rapport_avertissements")}</p>
+      <ul>{#each rapport.r.avertissements as a}<li>{t(`conversion.avert.${a.code}`, a.params)}</li>{/each}</ul>
+    {/if}
+    {#each ["vues", "procedures", "declencheurs", "evenements"] as const as k}
+      {#if rapport.r.non_convertis[k].length}
+        <p class="avert">{t(`conversion.non_convertis.${k}`, { liste: rapport.r.non_convertis[k].join(", ") })}</p>
+      {/if}
+    {/each}
+    {#if !rapport.r.avertissements.length && !Object.values(rapport.r.non_convertis).some((l) => l.length)}
+      <p class="info">{t("sites.rapport_parfait")}</p>
+    {/if}
+    <details>
+      <summary class="muted">{t("sites.rapport_tables")}</summary>
+      <ul class="mono petit">{#each rapport.r.tables as tb}<li>{tb.nom} : {tb.lignes}</li>{/each}</ul>
+    </details>
+  </section>
+{/if}
+
+{#if confirmation}
+  {@const c = confirmation}
+  <!-- Confirmation avant migration. -->
+  <div class="voile" role="presentation" onclick={() => (confirmation = null)}>
+    <div class="dialogue carte" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (confirmation = null)}>
+      <h3>{t("sites.migrer_titre", { site: c.site.name })}</h3>
+      <p><strong>{libelleBase(c.site.db_actuel)}</strong> → <strong>{nomMoteur(c.cible.moteur)} {c.cible.branch}</strong> (port {c.cible.port})</p>
+      <p>{estConversion(c.site, c.cible) ? t("sites.migrer_conversion") : t("sites.migrer_copie")}</p>
+      <p class="muted petit">{t("sites.migrer_conserve")}</p>
+      <div class="dialogue-boutons">
+        <button onclick={() => (confirmation = null)}>{t("sites.annuler")}</button>
+        <button class="primaire" onclick={migrer}>⇄ {t("sites.migrer")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if sites.length === 0}
   <p class="muted">{t("sites.aucun")}</p>
 {:else}
   <table class="carte">
     <thead>
-      <tr><th>{t("sites.col_site")}</th><th>PHP</th><th>{t("sites.col_base")}</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
+      <tr><th>{t("sites.col_site")}</th><th class="col-type"></th><th>PHP</th><th>{t("sites.col_base")}</th><th>{t("sites.col_ouvrir")}</th><th></th></tr>
     </thead>
     <tbody>
       {#each sites as s (s.name)}
@@ -157,6 +230,7 @@
             <strong>{s.name}</strong>
             <div class="muted petit mono" title={s.root}>{s.host}{s.root !== s.dir ? ` → ${s.root.replace(s.dir, "").replaceAll("\\", "/")}` : ""}</div>
           </td>
+          <td class="col-type">{#if s.type_site}<LogoSite type={s.type_site} />{/if}</td>
           <td>
             <select disabled={occupe[s.name]} value={s.php_choice ?? ""} onchange={(e) => executer(s.name, () => api.siteSetPhp(s.name, e.currentTarget.value === "" ? null : e.currentTarget.value))}>
               <option value="">{t("sites.php_defaut", { version: defaut?.branch ?? "—" })}</option>
@@ -168,18 +242,26 @@
             {#if s.php_missing}<div class="avert petit">{t("sites.php_manquant", { branche: s.php_choice ?? "", version: s.php_version ?? "—" })}</div>{/if}
           </td>
           <td>
-            {#if bases.length > 1}
-              <select disabled={occupe["db-" + s.name]} value={s.db_choice ?? ""} title={t("sites.db_aide")} onchange={(e) => choisirBase(s, e.currentTarget.value)}>
-                <option value="">{t("sites.db_defaut", { base: baseDefaut ? `${nomMoteur(baseDefaut.moteur)} ${baseDefaut.branch}` : "—" })}</option>
-                {#each bases.filter((b) => b.choix !== baseDefaut?.choix) as b}
-                  <!-- WordPress ne fonctionne pas avec PostgreSQL. -->
-                  <option value={b.choix} disabled={s.wordpress && b.moteur === "postgresql"}>{nomMoteur(b.moteur)} {b.branch}</option>
-                {/each}
-              </select>
-              {#if occupe["db-" + s.name]}<div class="muted petit">{t("sites.db_en_cours")}</div>{/if}
-            {:else}
-              <span class="muted petit">{s.db_version ? `${nomMoteur(s.db_moteur)} ${s.db_version}` : "—"}</span>
-            {/if}
+            <!-- Base actuelle (texte) → base cible (liste) → bouton, actif seulement si la cible diffère. -->
+            <div class="base">
+              <span class="actuelle" title={s.db_version ? `${nomMoteur(s.db_moteur)} ${s.db_version}` : ""}>
+                {libelleBase(s.db_actuel)}{#if s.db_defaut}<span class="muted"> ({t("services.par_defaut")})</span>{/if}
+              </span>
+              {#if bases.length > 1}
+                <span class="muted">→</span>
+                <select bind:value={cibles[s.name]} disabled={occupe["db-" + s.name]} title={t("sites.db_aide")}>
+                  {#each bases as b (b.choix)}
+                    <!-- WordPress ne fonctionne pas avec PostgreSQL. -->
+                    <option value={b.choix} disabled={s.wordpress && b.moteur === "postgresql"}>
+                      {nomMoteur(b.moteur)} {b.branch}{b.choix === baseDefaut?.choix ? ` (${t("services.par_defaut")})` : ""}
+                    </option>
+                  {/each}
+                </select>
+                <button disabled={occupe["db-" + s.name] || !cibles[s.name] || cibles[s.name] === s.db_actuel} onclick={() => demanderMigration(s)}>
+                  ⇄ {occupe["db-" + s.name] ? t("sites.db_en_cours") : t("sites.migrer")}
+                </button>
+              {/if}
+            </div>
           </td>
           <td class="liens">
             <!-- Menu « Ouvrir » : adresses du site et dossier, regroupés pour garder une ligne compacte. -->
@@ -233,6 +315,17 @@
   .menu-liste hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .menu-liste span { padding: 6px 10px; }
   .actions { text-align: right; white-space: nowrap; }
+  .col-type { width: 22px; padding-left: 0; padding-right: 0; }
+  .base { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .base .actuelle { white-space: nowrap; }
+  .base button { white-space: nowrap; }
+  .rapport { padding: 12px 16px; margin-bottom: 12px; }
+  .rapport-tete { display: flex; justify-content: space-between; align-items: center; }
+  .rapport ul { margin: 4px 0 8px; padding-left: 20px; }
+  .voile { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; }
+  .dialogue { max-width: 520px; padding: 18px 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
+  .dialogue h3 { margin: 0 0 10px; }
+  .dialogue-boutons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .petit { font-size: 12px; }
   .avert { color: var(--accent); }
   .erreur { color: var(--danger); white-space: pre-wrap; font-family: inherit; }

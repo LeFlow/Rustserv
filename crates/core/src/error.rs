@@ -111,6 +111,14 @@ pub enum Error {
     #[error("WordPress ne fonctionne pas avec PostgreSQL ({site})")]
     WordpressPostgresql { site: String },
 
+    /// La base cible d'une conversion contient déjà des tables.
+    #[error("la base {base} existe déjà dans {moteur} et n'est pas vide")]
+    BaseCibleNonVide { base: String, moteur: String },
+
+    /// Échec de la conversion MySQL/MariaDB ↔ PostgreSQL.
+    #[error("conversion de la base échouée : {detail}")]
+    ConversionBase { detail: String },
+
     /// Erreur dans un gabarit de configuration.
     #[error("gabarit {nom} invalide : {detail}")]
     Gabarit { nom: String, detail: String },
@@ -197,6 +205,8 @@ impl Error {
             Error::Gabarit { .. } => "config.gabarit",
             Error::BaseInit { .. } => "service.base_init",
             Error::WordpressPostgresql { .. } => "base.wordpress_postgresql",
+            Error::BaseCibleNonVide { .. } => "base.cible_non_vide",
+            Error::ConversionBase { .. } => "base.conversion",
             Error::ReglagesInvalides { .. } => "reglages.invalides",
             Error::PhpInvalide { .. } => "php.invalide",
             Error::ExtensionInconnue { .. } => "extension.inconnue",
@@ -259,6 +269,8 @@ impl Error {
             Error::Gabarit { nom, detail } => json!({ "nom": nom, "detail": detail }),
             Error::BaseInit { detail } | Error::ReglagesInvalides { detail } => json!({ "detail": detail }),
             Error::WordpressPostgresql { site } => json!({ "site": site }),
+            Error::BaseCibleNonVide { base, moteur } => json!({ "base": base, "moteur": moteur }),
+            Error::ConversionBase { detail } => json!({ "detail": detail }),
             Error::PhpInvalide { version, detail } => json!({ "version": version, "detail": detail }),
             Error::ExtensionInconnue { extension, version } => json!({ "extension": extension, "version": version }),
             Error::ExtensionIntegree { extension } => json!({ "extension": extension }),
@@ -349,6 +361,8 @@ mod tests {
             Error::Gabarit { nom: s(), detail: s() },
             Error::BaseInit { detail: s() },
             Error::WordpressPostgresql { site: s() },
+            Error::BaseCibleNonVide { base: s(), moteur: s() },
+            Error::ConversionBase { detail: s() },
             Error::ReglagesInvalides { detail: s() },
             Error::PhpInvalide { version: s(), detail: s() },
             Error::ExtensionInconnue { extension: s(), version: s() },

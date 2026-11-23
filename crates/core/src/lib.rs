@@ -9,6 +9,7 @@
 pub mod catalog;
 pub mod db;
 pub mod compat;
+pub mod conversion;
 pub mod error;
 pub mod extensions_ops;
 pub mod hosts;
@@ -22,6 +23,7 @@ pub mod relocation;
 pub mod services;
 pub mod settings;
 pub mod sites;
+pub mod site_type;
 pub mod ssl;
 pub mod templates;
 pub mod terminal;

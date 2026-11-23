@@ -160,6 +160,26 @@ export interface SiteView {
   db_choice: string | null;
   db_moteur: Moteur | null;
   db_version: string | null;
+  /** Base réellement utilisée, au format d'un choix (« mariadb:12.3 »). */
+  db_actuel: string | null;
+  /** Le site suit la base par défaut (aucun choix enregistré). */
+  db_defaut: boolean;
+  /** Type de site reconnu (WordPress, Laravel…). */
+  type_site: TypeDetecte | null;
+}
+
+/** Type de site reconnu d'après ses fichiers (logo affiché dans la page Sites). */
+export interface TypeDetecte {
+  framework: string;
+  version: string | null;
+}
+
+/** Rapport d'une conversion MariaDB / MySQL ↔ PostgreSQL. */
+export interface RapportConversion {
+  tables: { nom: string; lignes: number }[];
+  avertissements: { code: string; params: Record<string, unknown> }[];
+  non_convertis: { vues: string[]; procedures: string[]; declencheurs: string[]; evenements: string[] };
+  secondes: number;
 }
 
 /** Version installée d'un moteur de bases de données. */
@@ -400,7 +420,7 @@ export const api = {
   adminerOpen: (port: number | null = null, moteur: Moteur | null = null) => invoke<string>("adminer_open", { port, moteur }),
   basesVersions: () => invoke<BaseVersion[]>("bases_versions"),
   siteSetBase: (site: string, choix: string | null) =>
-    invoke<{ base: string | null; de: string; vers: string; port: number; copiee: boolean }>("site_set_base", { site, choix }),
+    invoke<{ base: string | null; de: string; vers: string; port: number; copiee: boolean; rapport: RapportConversion | null }>("site_set_base", { site, choix }),
   restartPending: () => invoke<boolean>("services_restart_pending"),
   serviceLog: (group: Groupe) => invoke<string>("service_log", { group }),
   onServiceStatus: (cb: (e: StatusEvent) => void): Promise<UnlistenFn> =>

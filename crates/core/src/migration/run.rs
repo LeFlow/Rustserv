@@ -744,20 +744,75 @@ pub async fn creer_base(client: &Path, moteur: Moteur, port: u16, base: &str) ->
     Ok(())
 }
 
-/// Change le moteur d'un site entre familles (MariaDB/MySQL ↔ PostgreSQL) : les données ne
-/// peuvent pas être converties automatiquement ; une base **vide** du même nom est créée
-/// dans la cible (l'ancienne est conservée) et la configuration du site est adaptée.
-pub async fn changer_de_moteur(dossier: &Path, site: &str, client_cible: &Path, cible: &InstalledPackage, port: u16) -> Result<Option<String>> {
-    let moteur = Stack::moteur_de(cible);
-    if moteur == Moteur::Postgresql && dossier.join("wp-config.php").is_file() {
+/// La base existe-t-elle dans l'instance (qui doit tourner) ?
+pub async fn base_existe(client: &Path, moteur: Moteur, port: u16, base: &str) -> Result<bool> {
+    if moteur.famille_mysql() {
+        return Ok(Cible { client: client.to_path_buf(), port }.bases().await?.iter().any(|b| b == base));
+    }
+    let args = vec![
+        "-h".to_string(),
+        "127.0.0.1".into(),
+        "-p".into(),
+        port.to_string(),
+        "-U".into(),
+        "postgres".into(),
+        "-d".into(),
+        "postgres".into(),
+        "-tAc".into(),
+        format!("SELECT 1 FROM pg_database WHERE datname = '{}'", base.replace('\'', "''")),
+    ];
+    let (ok, out, err) = executer(client, &args, None, 60).await?;
+    if !ok {
+        return Err(echec(err.trim().to_string()));
+    }
+    Ok(out.trim() == "1")
+}
+
+/// Une instance (qui tourne) avec son client en ligne de commande.
+pub struct Instance<'a> {
+    pub pkg: &'a InstalledPackage,
+    pub client: PathBuf,
+    pub port: u16,
+}
+
+/// Change le moteur d'un site entre familles (MariaDB/MySQL ↔ PostgreSQL), **données comprises** :
+/// la base est créée dans la cible (elle doit être absente ou vide), convertie par
+/// [`crate::conversion::convertir`], puis la configuration du site est adaptée.
+/// L'ancienne base est **conservée**. Renvoie (nom de la base, rapport de conversion) ;
+/// pas de rapport si le site n'a pas de base ou si elle n'existe pas dans la source.
+pub async fn changer_de_moteur(
+    paths: &Paths,
+    dossier: &Path,
+    site: &str,
+    php: &InstalledPackage,
+    source: &Instance<'_>,
+    cible: &Instance<'_>,
+) -> Result<(Option<String>, Option<crate::conversion::RapportConversion>)> {
+    use crate::conversion::{convertir, Connexion};
+    let (ms, mc) = (Stack::moteur_de(source.pkg), Stack::moteur_de(cible.pkg));
+    if mc == Moteur::Postgresql && dossier.join("wp-config.php").is_file() {
         return Err(Error::WordpressPostgresql { site: site.into() });
     }
-    let base = base_du_site(dossier);
-    if let Some(b) = &base {
-        creer_base(client_cible, moteur, port, b).await?;
-    }
-    configurer_base(dossier, moteur, port)?;
-    Ok(base)
+    let Some(base) = base_du_site(dossier) else {
+        configurer_base(dossier, mc, cible.port)?;
+        return Ok((None, None));
+    };
+    creer_base(&cible.client, mc, cible.port, &base).await?;
+    let rapport = if base_existe(&source.client, ms, source.port, &base).await? {
+        Some(
+            convertir(
+                paths,
+                php,
+                &Connexion { moteur: ms, port: source.port, base: base.clone() },
+                &Connexion { moteur: mc, port: cible.port, base: base.clone() },
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    configurer_base(dossier, mc, cible.port)?;
+    Ok((Some(base), rapport))
 }
 
 /// Copie la base d'un site d'une instance MariaDB / MySQL vers une autre (les deux doivent tourner),

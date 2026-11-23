@@ -783,7 +783,7 @@ define( 'DB_HOST', '127.0.0.1' );
     let src = st.site_db("prod-copie").unwrap().clone();
     let client = st.db_client(&src).unwrap();
     let sql = |client: &std::path::Path, port: u16, q: &str| {
-        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "-N", "-B", "-e", q]).output().unwrap();
+        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "--default-character-set=utf8mb4", "-N", "-B", "-e", q]).output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     };
@@ -1004,7 +1004,7 @@ async fn nginx_puis_apache_servent_php() {
 #[ignore]
 async fn mysql_et_postgresql_reels() {
     use rustserv_core::db::{ChoixBase, Moteur};
-    use rustserv_core::migration::run::{changer_de_moteur, deplacer_base};
+    use rustserv_core::migration::run::{changer_de_moteur, deplacer_base, Instance};
     use rustserv_core::orchestrator::{Group, Orchestrator};
     use rustserv_core::process::ServiceState;
     let paths = Paths::new(racine().with_file_name("pile-bases"));
@@ -1049,7 +1049,7 @@ async fn mysql_et_postgresql_reels() {
     }
     let st = Stack::new(&paths, &settings, &installed);
     let sql = |client: &std::path::Path, port: u16, q: &str| {
-        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "-N", "-B", "-e", q]).output().unwrap();
+        let o = std::process::Command::new(client).args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "--default-character-set=utf8mb4", "-N", "-B", "-e", q]).output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     };
@@ -1077,10 +1077,14 @@ async fn mysql_et_postgresql_reels() {
     println!("MariaDB → MySQL : {v}");
     assert!(v.starts_with("8.4.") && v.ends_with("élément"), "{v}");
 
-    // Passage à PostgreSQL : base vide créée, .env adapté.
+    // Passage à PostgreSQL : base convertie (données comprises), .env adapté.
     let _ = psql("DROP DATABASE IF EXISTS appli");
-    let b = changer_de_moteur(&site, "appli", &st.db_client(&pg).unwrap(), &pg, settings.ports.postgresql).await.unwrap_or_else(|e| panic!("{e}"));
+    let php8 = rustserv_core::conversion::php_pour_conversion(&installed).unwrap().clone();
+    let src = Instance { pkg: &my, client: st.db_client(&my).unwrap(), port: settings.ports.mysql };
+    let dst = Instance { pkg: &pg, client: st.db_client(&pg).unwrap(), port: settings.ports.postgresql };
+    let (b, rapport) = changer_de_moteur(&paths, &site, "appli", &php8, &src, &dst).await.unwrap_or_else(|e| panic!("{e} {}", e.params()));
     assert_eq!(b.as_deref(), Some("appli"));
+    assert_eq!(rapport.expect("rapport de conversion").lignes(), 1, "la ligne « élément » est convertie");
     assert_eq!(psql("SELECT datname FROM pg_database WHERE datname = 'appli'"), "appli");
     let env = std::fs::read_to_string(site.join(".env")).unwrap();
     assert!(env.contains("DB_CONNECTION=pgsql") && env.contains(&format!("DB_PORT={}", settings.ports.postgresql)) && env.contains("DB_USERNAME=postgres"), "{env}");
@@ -1088,7 +1092,7 @@ async fn mysql_et_postgresql_reels() {
     let wp = paths.www().join("blog");
     std::fs::create_dir_all(&wp).unwrap();
     std::fs::write(wp.join("wp-config.php"), "<?php define( 'DB_NAME', 'blog' );").unwrap();
-    let e = changer_de_moteur(&wp, "blog", &st.db_client(&pg).unwrap(), &pg, settings.ports.postgresql).await.unwrap_err();
+    let e = changer_de_moteur(&paths, &wp, "blog", &php8, &src, &dst).await.unwrap_err();
     assert_eq!(e.code(), "base.wordpress_postgresql");
 
     // PHP se connecte à MySQL (caching_sha2_password sans mot de passe) et à PostgreSQL.
@@ -1179,5 +1183,163 @@ async fn adminer_mysql_et_postgresql() {
         assert!(page.contains(attendu) && !page.contains("Invalid credentials"), "{url} :\n{}", page.chars().take(1200).collect::<String>());
         println!("  connecté ({} octets)", page.len());
     }
+    orch.supervisor().stop_all().await;
+}
+
+/// Conversion RÉELLE MySQL 8.4 → PostgreSQL 17 → MariaDB 12.3, données comprises
+/// (schéma type WordPress + Laravel : dates zéro, booléens, enum, JSON, binaire, clé étrangère…).
+#[tokio::test]
+#[ignore]
+async fn conversion_mysql_postgresql_mariadb() {
+    use rustserv_core::conversion::{convertir, php_pour_conversion, Connexion};
+    use rustserv_core::db::Moteur;
+    use rustserv_core::orchestrator::{Group, Orchestrator};
+    let paths = Paths::new(racine().with_file_name("pile-bases"));
+    paths.ensure_layout().unwrap();
+    let cat = Catalog::embedded().unwrap();
+    let inst = Installer::new(paths.clone()).unwrap();
+    for (id, b) in [("php", Some("8.3")), ("mariadb", Some("12.3")), ("mysql", Some("8.4")), ("postgresql", Some("17"))] {
+        installe(&inst, &cat, id, b).await;
+    }
+    let installed = inst.installed().unwrap();
+    let mut settings = Settings::default();
+    settings.ports.mariadb = libre();
+    settings.ports.mysql = libre();
+    settings.ports.postgresql = libre();
+    let orch = Orchestrator::new(paths.clone(), Supervisor::new().unwrap());
+    for g in [Group::Mariadb, Group::Mysql, Group::Postgresql] {
+        orch.start(g, &settings, &installed).await.unwrap_or_else(|e| panic!("{g:?} : {e}"));
+    }
+    let st = Stack::new(&paths, &settings, &installed);
+    let pkg = |id: &str| installed.iter().find(|p| p.package == id).unwrap().clone();
+    let (ma, my, pg) = (pkg("mariadb"), pkg("mysql"), pkg("postgresql"));
+    let mysql = |client: &std::path::Path, port: u16, q: &str| {
+        let o = std::process::Command::new(client)
+            .args(["--host=127.0.0.1", &format!("--port={port}"), "--user=root", "--default-character-set=utf8mb4", "-N", "-B", "-e", q])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{q}\n{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    let psql = |base: &str, q: &str| {
+        let o = std::process::Command::new(st.db_client(&pg).unwrap())
+            .args(["-h", "127.0.0.1", "-p", &settings.ports.postgresql.to_string(), "-U", "postgres", "-d", base, "-tA", "-F", "|", "-c", q])
+            .env("PGCLIENTENCODING", "UTF8")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{q}\n{}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n").trim().to_string()
+    };
+    let (cmy, cma) = (st.db_client(&my).unwrap(), st.db_client(&ma).unwrap());
+
+    // Base source MySQL.
+    mysql(&cmy, settings.ports.mysql, r#"SET SESSION sql_mode = '';
+DROP DATABASE IF EXISTS conv; CREATE DATABASE conv CHARACTER SET utf8mb4; USE conv;
+CREATE TABLE wp_posts (
+  ID bigint unsigned NOT NULL AUTO_INCREMENT,
+  post_author bigint unsigned NOT NULL DEFAULT '0',
+  post_date datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+  post_date_gmt datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+  post_content longtext NOT NULL,
+  post_title text NOT NULL,
+  post_status varchar(20) NOT NULL DEFAULT 'publish',
+  post_name varchar(200) NOT NULL DEFAULT '',
+  menu_order int NOT NULL DEFAULT '0',
+  PRIMARY KEY (ID), KEY post_name (post_name(191)), KEY type_status_date (post_status, post_date, ID)
+) ENGINE=InnoDB;
+INSERT INTO wp_posts (post_author, post_date, post_date_gmt, post_content, post_title, post_name) VALUES
+ (1, '2024-03-01 10:00:00', '0000-00-00 00:00:00', 'Élément « accentué » 🚀\nligne 2', 'Bonjour l''été', 'bonjour'),
+ (1, '2024-03-02 11:30:00', '2024-03-02 10:30:00', REPEAT('x', 70000), 'Long', 'long');
+CREATE TABLE users (
+  id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name varchar(255) NOT NULL,
+  email varchar(255) NOT NULL UNIQUE,
+  is_admin tinyint(1) NOT NULL DEFAULT 0,
+  role enum('admin','editor','user') NOT NULL DEFAULT 'user',
+  settings json NULL,
+  balance decimal(10,2) NOT NULL DEFAULT 0.00,
+  avatar blob NULL,
+  created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  birthday date NULL
+);
+INSERT INTO users (name, email, is_admin, role, settings, balance, avatar, birthday) VALUES
+ ('Zoé', 'zoe@ex.test', 1, 'admin', '{"theme":"sombre","n":3}', 1234.56, UNHEX('00FF10'), '1990-05-17'),
+ ('Ali', 'ali@ex.test', 0, 'editor', NULL, -5.50, NULL, NULL);
+CREATE TABLE commandes (
+  id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id bigint unsigned NOT NULL,
+  total decimal(10,2) NOT NULL,
+  CONSTRAINT commandes_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+INSERT INTO commandes (user_id, total) VALUES (1, 10.00), (1, 20.50), (2, 3.00);
+CREATE VIEW v_admins AS SELECT name FROM users WHERE is_admin = 1;
+CREATE TRIGGER t_maj BEFORE UPDATE ON users FOR EACH ROW SET NEW.name = NEW.name;"#);
+
+    let php = php_pour_conversion(&installed).unwrap().clone();
+    // 1. MySQL → PostgreSQL
+    let _ = psql("postgres", "DROP DATABASE IF EXISTS conv");
+    psql("postgres", "CREATE DATABASE conv ENCODING 'UTF8'");
+    let r = convertir(
+        &paths,
+        &php,
+        &Connexion { moteur: Moteur::Mysql, port: settings.ports.mysql, base: "conv".into() },
+        &Connexion { moteur: Moteur::Postgresql, port: settings.ports.postgresql, base: "conv".into() },
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{e}\n{}", e.params()));
+    println!("MySQL → PostgreSQL : {} tables, {} lignes, {:.1}s", r.tables.len(), r.lignes(), r.secondes);
+    for a in &r.avertissements {
+        println!("  avertissement {} {}", a.code, a.params);
+    }
+    println!("  non convertis : {:?}", r.non_convertis);
+    assert_eq!(r.lignes(), 7);
+    assert_eq!(r.non_convertis.vues, ["v_admins"]);
+    assert_eq!(r.non_convertis.declencheurs, ["t_maj"]);
+    assert!(r.avertissements.iter().any(|a| a.code == "dates_zero"));
+
+    assert_eq!(psql("conv", "SELECT post_title, post_content FROM wp_posts WHERE \"ID\" = 1"), "Bonjour l'été|Élément « accentué » 🚀\nligne 2");
+    assert_eq!(psql("conv", "SELECT post_date_gmt IS NULL, length(post_content) FROM wp_posts ORDER BY \"ID\""), "t|30\nf|70000");
+    assert_eq!(psql("conv", "SELECT is_admin, role, settings->>'theme', balance, encode(avatar, 'hex'), birthday FROM users ORDER BY id"), "t|admin|sombre|1234.56|00ff10|1990-05-17\nf|editor||-5.50||");
+    assert_eq!(psql("conv", "SELECT data_type FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_admin'"), "boolean");
+    // Identifiants automatiques : la séquence repart après le plus grand.
+    assert_eq!(psql("conv", "INSERT INTO users (name, email) VALUES ('Nouveau', 'n@ex.test') RETURNING id").lines().next(), Some("3"));
+    // Clé étrangère avec suppression en cascade, enum contrôlé, unicité.
+    psql("conv", "DELETE FROM users WHERE id = 1");
+    assert_eq!(psql("conv", "SELECT count(*) FROM commandes"), "1");
+    assert!(std::process::Command::new(st.db_client(&pg).unwrap())
+        .args(["-h", "127.0.0.1", "-p", &settings.ports.postgresql.to_string(), "-U", "postgres", "-d", "conv", "-c", "UPDATE users SET role = 'pirate'"])
+        .output().unwrap().stderr.len() > 0, "contrainte d'enum");
+    assert_eq!(psql("conv", "SELECT count(*) FROM pg_indexes WHERE tablename = 'wp_posts'"), "3", "clé primaire + 2 index");
+
+    // 2. PostgreSQL → MariaDB (chemin inverse).
+    let _ = mysql(&cma, settings.ports.mariadb, "DROP DATABASE IF EXISTS conv2; CREATE DATABASE conv2 CHARACTER SET utf8mb4");
+    let r2 = convertir(
+        &paths,
+        &php,
+        &Connexion { moteur: Moteur::Postgresql, port: settings.ports.postgresql, base: "conv".into() },
+        &Connexion { moteur: Moteur::Mariadb, port: settings.ports.mariadb, base: "conv2".into() },
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{e}\n{}", e.params()));
+    println!("PostgreSQL → MariaDB : {} tables, {} lignes", r2.tables.len(), r2.lignes());
+    for a in &r2.avertissements {
+        println!("  avertissement {} {}", a.code, a.params);
+    }
+    assert_eq!(mysql(&cma, settings.ports.mariadb, "SELECT post_title FROM conv2.wp_posts WHERE ID = 1"), "Bonjour l'été");
+    assert_eq!(mysql(&cma, settings.ports.mariadb, "SELECT is_admin, role, HEX(avatar), balance FROM conv2.users ORDER BY id"), "0\teditor\tNULL\t-5.50\n0\tuser\tNULL\t0.00");
+    assert_eq!(mysql(&cma, settings.ports.mariadb, "INSERT INTO conv2.users (name, email) VALUES ('X', 'x@ex.test'); SELECT LAST_INSERT_ID()"), "4");
+    let fk = mysql(&cma, settings.ports.mariadb, "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'conv2'");
+    assert_eq!(fk, "CASCADE");
+
+    // 3. Cible non vide : refus, rien n'est touché.
+    let e = convertir(
+        &paths,
+        &php,
+        &Connexion { moteur: Moteur::Mysql, port: settings.ports.mysql, base: "conv".into() },
+        &Connexion { moteur: Moteur::Postgresql, port: settings.ports.postgresql, base: "conv".into() },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(e.code(), "base.cible_non_vide");
     orch.supervisor().stop_all().await;
 }

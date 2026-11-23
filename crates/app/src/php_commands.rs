@@ -193,6 +193,12 @@ pub struct SiteView {
     db_choice: Option<String>,
     db_moteur: Option<rustserv_core::db::Moteur>,
     db_version: Option<String>,
+    /// Base réellement utilisée, au format d'un choix (« mariadb:12.3 »).
+    db_actuel: Option<String>,
+    /// Le site n'a pas de choix : il suit la base par défaut.
+    db_defaut: bool,
+    /// Type de site reconnu (WordPress, Laravel…) et sa version.
+    type_site: Option<rustserv_core::site_type::TypeSite>,
 }
 
 #[tauri::command]
@@ -215,6 +221,12 @@ pub fn sites_list(state: State<'_, AppState>) -> Result<Vec<SiteView>> {
                 dir: s.dir.display().to_string(),
                 root: s.root.display().to_string(),
                 wordpress: s.dir.join("wp-config.php").is_file(),
+                db_actuel: st.site_db(&s.name).ok().map(|p| {
+                    let m = Stack::moteur_de(p);
+                    rustserv_core::db::ChoixBase { moteur: m, branche: m.branche(&p.version) }.texte()
+                }),
+                db_defaut: settings.choix_base(&s.name).is_none(),
+                type_site: rustserv_core::site_type::detecter(&s.dir),
                 db_choice: settings.choix_base(&s.name).map(|c| c.texte()),
                 db_moteur: st.site_db(&s.name).ok().map(Stack::moteur_de),
                 db_version: st.site_db(&s.name).ok().map(|p| p.version.clone()),
