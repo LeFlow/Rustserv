@@ -8,7 +8,7 @@
   import { onMount } from "svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { t, tErreur } from "../i18n";
-  import { api, nomMoteur, type BaseVersion, type HostsStatus, type PhpVersionView, type RapportConversion, type SiteView, type SslStatus } from "../lib/api";
+  import { api, nomMoteur, type BaseVersion, type HostsStatus, type PhpVersionView, type PlanPhp, type Rapport, type RapportConversion, type SiteView, type SslStatus } from "../lib/api";
   import LogoSite from "../components/LogoSite.svelte";
   import { nouveauTerminal } from "../lib/terminaux.svelte";
   import Import from "./Import.svelte";
@@ -34,6 +34,75 @@
   function ouvrir(url: string) {
     menuOuvert = null;
     openUrl(url);
+  }
+
+  // ------------------------------------------------------------ changement de PHP
+  /** Version de PHP choisie dans la liste, par site ("" = PHP par défaut). */
+  let ciblesPhp = $state<Record<string, string>>({});
+  /** Changement de PHP en attente de confirmation (plan des extensions, vérification du code). */
+  let changementPhp = $state<{
+    site: SiteView;
+    choix: string;
+    plan: PlanPhp | null;
+    erreur: string | null;
+    activer: boolean;
+    installer: boolean;
+    verification: Rapport | null;
+    verifEnCours: boolean;
+    verifErreur: string | null;
+  } | null>(null);
+
+  const libellePhp = (choix: string) => (choix === "" ? t("sites.php_defaut", { version: defaut?.branch ?? "—" }) : `PHP ${choix}`);
+
+  async function demanderChangementPhp(s: SiteView) {
+    const choix = ciblesPhp[s.name] ?? "";
+    changementPhp = { site: s, choix, plan: null, erreur: null, activer: true, installer: true, verification: null, verifEnCours: false, verifErreur: null };
+    try {
+      const plan = await api.sitePhpPlan(s.name, choix === "" ? null : choix);
+      if (changementPhp?.site.name === s.name) changementPhp.plan = plan;
+    } catch (e) {
+      if (changementPhp) changementPhp.erreur = tErreur(e);
+    }
+  }
+
+  /** Analyse PHPCompatibility du site pour la version visée (facultative). */
+  async function verifierCode() {
+    const c = changementPhp;
+    if (!c?.plan) return;
+    const branche = c.plan.vers.split(".").slice(0, 2).join(".");
+    c.verifEnCours = true;
+    c.verifErreur = null;
+    try {
+      c.verification = await api.compatPhpcs(c.site.name, branche, branche);
+    } catch (e) {
+      c.verifErreur = tErreur(e);
+    } finally {
+      c.verifEnCours = false;
+    }
+  }
+
+  function changerPhp() {
+    const c = changementPhp;
+    if (!c?.plan) return;
+    changementPhp = null;
+    const plan = c.plan;
+    executer(c.site.name, async () => {
+      const echecs: string[] = [];
+      if (c.activer) {
+        for (const ext of plan.a_activer) {
+          await api.phpExtensionSet(plan.vers, ext, true).catch((e) => echecs.push(`${ext} : ${tErreur(e)}`));
+        }
+      }
+      if (c.installer) {
+        for (const ext of plan.absentes.filter((x) => x.pecl)) {
+          await api.peclInstall(plan.vers, ext.nom).catch((e) => echecs.push(`${ext.nom} : ${tErreur(e)}`));
+        }
+      }
+      await api.siteSetPhp(c.site.name, c.choix === "" ? null : c.choix);
+      const ok = t("sites.php_change", { site: c.site.name, version: plan.vers });
+      return echecs.length ? `${ok}
+${t("sites.php_echecs", { liste: echecs.join(" ; ") })}` : ok;
+    });
   }
 
   // ------------------------------------------------------------ migration de base
@@ -80,6 +149,7 @@
       sites = s;
       // Chaque liste revient sur la base actuelle du site.
       cibles = Object.fromEntries(s.map((x) => [x.name, x.db_actuel ?? ""]));
+      ciblesPhp = Object.fromEntries(s.map((x) => [x.name, x.php_choice ?? ""]));
       branches = php.versions.filter((v) => v.active).map((v) => v.branch);
       defaut = php.versions.find((v) => v.default) ?? null;
       hosts = h;
@@ -199,6 +269,60 @@
   </section>
 {/if}
 
+{#if changementPhp}
+  {@const c = changementPhp}
+  <!-- Confirmation du changement de PHP : extensions et vérification facultative du code. -->
+  <div class="voile" role="presentation" onclick={() => (changementPhp = null)}>
+    <div class="dialogue carte" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === "Escape" && (changementPhp = null)}>
+      <h3>{t("sites.php_titre", { site: c.site.name })}</h3>
+      {#if c.erreur}
+        <pre class="erreur">{c.erreur}</pre>
+      {:else if !c.plan}
+        <p class="muted">{t("sites.php_analyse")}</p>
+      {:else}
+        <p><strong>PHP {c.plan.de ?? "—"}</strong> → <strong>PHP {c.plan.vers}</strong></p>
+        {#if c.plan.a_activer.length}
+          <label class="case"><input type="checkbox" bind:checked={c.activer} /> {t("sites.php_activer", { version: c.plan.vers, liste: c.plan.a_activer.join(", ") })}</label>
+        {/if}
+        {#if c.plan.absentes.some((x) => x.pecl)}
+          <label class="case"><input type="checkbox" bind:checked={c.installer} /> {t("sites.php_installer", { liste: c.plan.absentes.filter((x) => x.pecl).map((x) => x.nom).join(", ") })}</label>
+        {/if}
+        {#if c.plan.absentes.some((x) => !x.pecl)}
+          <p class="avert">{t("sites.php_indisponibles", { version: c.plan.vers, liste: c.plan.absentes.filter((x) => !x.pecl).map((x) => x.nom).join(", ") })}</p>
+        {/if}
+        {#if !c.plan.a_activer.length && !c.plan.absentes.length}
+          <p class="info">{t("sites.php_extensions_ok")}</p>
+        {/if}
+
+        <!-- Vérification facultative du code (PHPCompatibility). -->
+        <div class="verif">
+          {#if c.verification}
+            {@const v = c.verification}
+            <p class={v.erreurs ? "avert" : "info"}>{t("sites.php_verif_resultat", { erreurs: v.erreurs, avertissements: v.avertissements, version: c.plan.vers.split(".").slice(0, 2).join(".") })}</p>
+            {#if v.fichiers.length}
+              <ul class="mono petit">
+                {#each v.fichiers.flatMap((f) => f.messages.filter((m) => m.gravite === "erreur").map((m) => ({ f: f.chemin, m }))).slice(0, 5) as x}
+                  <li>{x.f}:{x.m.ligne} — {x.m.message}</li>
+                {/each}
+              </ul>
+              <p class="muted petit">{t("sites.php_verif_detail")}</p>
+            {/if}
+          {:else if c.verifErreur}
+            <pre class="erreur">{c.verifErreur}</pre>
+          {:else}
+            <button disabled={c.verifEnCours} onclick={verifierCode}>🔍 {c.verifEnCours ? t("sites.php_verif_en_cours") : t("sites.php_verifier")}</button>
+            <span class="muted petit">{t("sites.php_verif_aide")}</span>
+          {/if}
+        </div>
+      {/if}
+      <div class="dialogue-boutons">
+        <button onclick={() => (changementPhp = null)}>{t("sites.annuler")}</button>
+        <button class="primaire" disabled={!c.plan} onclick={changerPhp}>{t("sites.php_changer")}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if confirmation}
   {@const c = confirmation}
   <!-- Confirmation avant migration. -->
@@ -232,13 +356,23 @@
           </td>
           <td class="col-type">{#if s.type_site}<LogoSite type={s.type_site} />{/if}</td>
           <td>
-            <select disabled={occupe[s.name]} value={s.php_choice ?? ""} onchange={(e) => executer(s.name, () => api.siteSetPhp(s.name, e.currentTarget.value === "" ? null : e.currentTarget.value))}>
-              <option value="">{t("sites.php_defaut", { version: defaut?.branch ?? "—" })}</option>
-              {#each branches as b}<option value={b}>PHP {b}</option>{/each}
-              {#if s.php_choice && !branches.includes(s.php_choice)}
-                <option value={s.php_choice}>PHP {s.php_choice} ({t("sites.non_installe")})</option>
-              {/if}
-            </select>
+            <!-- Comme pour les bases : version actuelle (texte) → liste → bouton, actif si la cible diffère. -->
+            <div class="base">
+              <span class="actuelle" title={s.php_version ? `PHP ${s.php_version}` : ""}>{libellePhp(s.php_choice ?? "")}</span>
+              <span class="cible">
+                <span class="muted">→</span>
+                <select bind:value={ciblesPhp[s.name]} disabled={occupe[s.name]}>
+                  <option value="">{t("sites.php_defaut", { version: defaut?.branch ?? "—" })}</option>
+                  {#each branches as b}<option value={b}>PHP {b}</option>{/each}
+                  {#if s.php_choice && !branches.includes(s.php_choice)}
+                    <option value={s.php_choice}>PHP {s.php_choice} ({t("sites.non_installe")})</option>
+                  {/if}
+                </select>
+                <button disabled={occupe[s.name] || (ciblesPhp[s.name] ?? "") === (s.php_choice ?? "")} onclick={() => demanderChangementPhp(s)}>
+                  {occupe[s.name] ? t("sites.php_en_cours") : t("sites.php_changer")}
+                </button>
+              </span>
+            </div>
             {#if s.php_missing}<div class="avert petit">{t("sites.php_manquant", { branche: s.php_choice ?? "", version: s.php_version ?? "—" })}</div>{/if}
           </td>
           <td>
@@ -321,7 +455,7 @@
   .nom { white-space: nowrap; }
   td .mono { white-space: nowrap; }
   /* Fenêtre étroite (taille par défaut) : boutons d'action en icônes seules, libellé en infobulle. */
-  @media (max-width: 1400px) {
+  @media (max-width: 1300px) {
     .actions .libelle { display: none; }
   }
   .col-type { width: 22px; padding-left: 0; padding-right: 0; }
@@ -335,6 +469,9 @@
   .voile { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.35); display: grid; place-items: center; }
   .dialogue { max-width: 520px; padding: 18px 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
   .dialogue h3 { margin: 0 0 10px; }
+  .case { display: block; margin: 6px 0; }
+  .verif { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .verif ul { margin: 4px 0; padding-left: 18px; }
   .dialogue-boutons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .petit { font-size: 12px; }
   .avert { color: var(--accent); }

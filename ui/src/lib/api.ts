@@ -174,6 +174,14 @@ export interface TypeDetecte {
   version: string | null;
 }
 
+/** Changement de PHP d'un site : extensions à activer / installer dans la version visée. */
+export interface PlanPhp {
+  de: string | null;
+  vers: string;
+  a_activer: string[];
+  absentes: { nom: string; pecl: boolean }[];
+}
+
 /** Rapport d'une conversion MariaDB / MySQL ↔ PostgreSQL. */
 export interface RapportConversion {
   tables: { nom: string; lignes: number }[];
@@ -409,6 +417,7 @@ export const api = {
   phpUpgrade: (branch: string, keepOld: boolean) => invoke<MigrationReport>("php_upgrade", { branch, keepOld }),
   sitesList: () => invoke<SiteView[]>("sites_list"),
   siteSetPhp: (site: string, branch: string | null) => invoke<void>("site_set_php", { site, branch }),
+  sitePhpPlan: (site: string, branche: string | null) => invoke<PlanPhp>("site_php_plan", { site, branche }),
 
   servicesOverview: () => invoke<GroupView[]>("services_overview"),
   serviceStart: (group: Groupe) => invoke<void>("service_start", { group }),

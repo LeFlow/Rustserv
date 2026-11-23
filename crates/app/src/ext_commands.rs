@@ -132,3 +132,52 @@ pub async fn activer_pgsql(
         }
     }
 }
+
+#[derive(Serialize)]
+pub struct PlanPhp {
+    /// Versions complètes actuelle et visée (« 8.5.13 »).
+    de: Option<String>,
+    vers: String,
+    /// Extensions actives avec la version actuelle, présentes mais inactives dans la nouvelle.
+    a_activer: Vec<String>,
+    /// Extensions actives avec la version actuelle, absentes de la nouvelle ; `pecl` = installable.
+    absentes: Vec<AbsentePhp>,
+}
+
+#[derive(Serialize)]
+pub struct AbsentePhp {
+    nom: String,
+    pecl: bool,
+}
+
+/// Prépare le changement de PHP d'un site (`branche` None = PHP par défaut) : compare les
+/// extensions actives de la version actuelle avec celles de la version visée.
+#[tauri::command]
+pub async fn site_php_plan(state: State<'_, AppState>, site: String, branche: Option<String>) -> Result<PlanPhp> {
+    use rustserv_core::php::extensions::ExtState;
+    let settings = state.settings();
+    let installed = state.installer.installed()?;
+    let (de, vers) = {
+        let st = rustserv_core::services::Stack::new(&state.paths, &settings, &installed);
+        let de = st.site_php(&site).map(|p| p.version.clone());
+        let vers = match &branche {
+            Some(b) => st.resolve_php(b),
+            None => st.default_php(),
+        }
+        .map(|p| p.version.clone())
+        .ok_or_else(|| Error::AucuneVersion { id: format!("php {}", branche.clone().unwrap_or_default()) })?;
+        (de, vers)
+    };
+    let mut plan = PlanPhp { de: de.clone(), vers: vers.clone(), a_activer: vec![], absentes: vec![] };
+    let Some(de) = de.filter(|d| *d != vers) else { return Ok(plan) };
+    let actuelles = state.orchestrator.extensions(&state.installer, &settings, &de).await?;
+    let cibles = state.orchestrator.extensions(&state.installer, &settings, &vers).await?;
+    for ext in actuelles.iter().filter(|e| matches!(e.state, ExtState::Active)) {
+        match cibles.iter().find(|c| c.name == ext.name).map(|c| &c.state) {
+            Some(ExtState::Active | ExtState::Integree) => {}
+            Some(_) => plan.a_activer.push(ext.name.clone()),
+            None => plan.absentes.push(AbsentePhp { pecl: pecl::PECL.contains(&ext.name.as_str()), nom: ext.name.clone() }),
+        }
+    }
+    Ok(plan)
+}

@@ -182,7 +182,22 @@
     "rapport_resume": "{tables} table(s), {lignes} ligne(s) converties en {secondes} s.",
     "rapport_avertissements": "Points à vérifier :",
     "rapport_parfait": "Tout a été converti, sans point d'attention.",
-    "rapport_tables": "Détail par table"
+    "rapport_tables": "Détail par table",
+    "php_changer": "Changer",
+    "php_en_cours": "Changement…",
+    "php_titre": "Changer la version de PHP de « {site} »",
+    "php_analyse": "Comparaison des extensions…",
+    "php_activer": "Activer aussi dans PHP {version} : {liste}",
+    "php_installer": "Installer depuis PECL : {liste}",
+    "php_indisponibles": "Non disponibles pour PHP {version} : {liste}. Le site pourrait en avoir besoin.",
+    "php_extensions_ok": "Toutes les extensions utilisées actuellement sont disponibles dans cette version.",
+    "php_verifier": "Vérifier d'abord le code",
+    "php_verif_en_cours": "Analyse du code…",
+    "php_verif_aide": "Facultatif : recherche les fonctions supprimées ou modifiées dans cette version (PHPCompatibility).",
+    "php_verif_resultat": "Code analysé pour PHP {version} : {erreurs} erreur(s), {avertissements} avertissement(s).",
+    "php_verif_detail": "Détail complet dans la page Compatibilité.",
+    "php_change": "{site} utilise maintenant PHP {version}.",
+    "php_echecs": "Extensions non activées : {liste}"
   },
   "parametres": {
     "repli": "Votre fichier rustserv.json n'a pas pu être lu : les réglages par défaut sont utilisés.",

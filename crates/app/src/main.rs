@@ -94,15 +94,24 @@ fn main() {
             compat_commands::compat_phpcs,
             compat_commands::compat_phpstan,
             compat_commands::compat_cancel,
+            ext_commands::site_php_plan,
         ])
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             // Fenêtre créée en code pour stocker le profil WebView2 dans le
             // dossier portable (sinon il irait dans %LOCALAPPDATA%).
+            // Taille confortable (page Sites lisible), limitée à 92 % de l'écran (petits portables).
+            let (mut largeur, mut hauteur) = (1400.0_f64, 900.0_f64);
+            if let Ok(Some(ecran)) = app.primary_monitor() {
+                let taille = ecran.size().to_logical::<f64>(ecran.scale_factor());
+                largeur = largeur.min(taille.width * 0.92);
+                hauteur = hauteur.min(taille.height * 0.92);
+            }
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Rustserv")
-                .inner_size(1100.0, 720.0)
-                .min_inner_size(820.0, 540.0)
+                .inner_size(largeur, hauteur)
+                .min_inner_size(900.0, 600.0)
+                .center()
                 .data_directory(paths.tmp().join("webview"))
                 .build()?;
             tray::create(app.handle())?;

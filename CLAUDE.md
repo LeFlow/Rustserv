@@ -240,6 +240,12 @@ Dossier portable : `bin/ etc/ data/ www/ ssl/ logs/ tmp/ catalog.json`.
   import nommé → seuls les logos utilisés sont inclus, +17 Ko gzip), `components/LogoSite.svelte`.
 - Page Sites : base actuelle (texte) → liste des bases installées → bouton « Migrer » (actif si la
   cible diffère), confirmation (voile + dialogue), rapport de conversion.
+- PHP d'un site, même principe : version actuelle → liste → « Changer ». `site_php_plan` compare les
+  extensions **actives** de la version actuelle à la version visée : `a_activer` (présentes mais
+  inactives, case cochée → `php_extension_set`), `absentes` (`pecl` = installable → `peclInstall`).
+  Bouton facultatif « Vérifier d'abord le code » = `compat_phpcs` avec min = max = branche visée.
+- Fenêtre : 1400 × 900 par défaut (limitée à 92 % de l'écran), minimum 900 × 600 ; boutons d'action
+  de la page Sites en icônes seules sous 1300 px.
 - Adminer : `?port=…&driver=pgsql` (utilisateur postgres) ; pgsql activée dans le PHP par défaut.
 - Terminal : client du moteur du site, `PGHOST/PGPORT/PGUSER` pour PostgreSQL.
 - Import Laragon/WAMP : cible MariaDB **ou MySQL** (pas PostgreSQL).
