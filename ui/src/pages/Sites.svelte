@@ -227,7 +227,7 @@
       {#each sites as s (s.name)}
         <tr>
           <td>
-            <strong>{s.name}</strong>
+            <strong class="nom">{s.name}</strong>
             <div class="muted petit mono" title={s.root}>{s.host}{s.root !== s.dir ? ` → ${s.root.replace(s.dir, "").replaceAll("\\", "/")}` : ""}</div>
           </td>
           <td class="col-type">{#if s.type_site}<LogoSite type={s.type_site} />{/if}</td>
@@ -245,9 +245,10 @@
             <!-- Base actuelle (texte) → base cible (liste) → bouton, actif seulement si la cible diffère. -->
             <div class="base">
               <span class="actuelle" title={s.db_version ? `${nomMoteur(s.db_moteur)} ${s.db_version}` : ""}>
-                {libelleBase(s.db_actuel)}{#if s.db_defaut}<span class="muted"> ({t("services.par_defaut")})</span>{/if}
+                {libelleBase(s.db_actuel)}{#if s.db_defaut}&nbsp;<span class="muted">({t("services.par_defaut")})</span>{/if}
               </span>
               {#if bases.length > 1}
+                <span class="cible">
                 <span class="muted">→</span>
                 <select bind:value={cibles[s.name]} disabled={occupe["db-" + s.name]} title={t("sites.db_aide")}>
                   {#each bases as b (b.choix)}
@@ -260,6 +261,7 @@
                 <button disabled={occupe["db-" + s.name] || !cibles[s.name] || cibles[s.name] === s.db_actuel} onclick={() => demanderMigration(s)}>
                   ⇄ {occupe["db-" + s.name] ? t("sites.db_en_cours") : t("sites.migrer")}
                 </button>
+                </span>
               {/if}
             </div>
           </td>
@@ -287,9 +289,9 @@
               <button title={t("sites.wp_fix_aide")} disabled={occupe["wp-" + s.name]} onclick={() => executer("wp-" + s.name, async () => {
                 const r = await api.siteWpFix(s.name);
                 return r.ancienne ? t("sites.wp_fix_ok", { site: s.name, de: r.ancienne, vers: r.nouvelle }) : t("sites.wp_fix_rien", { site: s.name, url: r.nouvelle });
-              })}>🔧 {occupe["wp-" + s.name] ? t("sites.wp_fix_en_cours") : t("sites.wp_fix")}</button>
+              })}>🔧 <span class="libelle">{occupe["wp-" + s.name] ? t("sites.wp_fix_en_cours") : t("sites.wp_fix")}</span></button>
             {/if}
-            <button onclick={() => terminal(s)}>&gt;_ {t("sites.terminal")}</button>
+            <button title={t("sites.terminal")} onclick={() => terminal(s)}>&gt;_ <span class="libelle">{t("sites.terminal")}</span></button>
           </td>
         </tr>
       {/each}
@@ -304,8 +306,8 @@
   .https { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 16px; margin-bottom: 12px; }
   /* Pas d'overflow: hidden (il couperait le menu « Ouvrir ») : coins arrondis via border-collapse: separate. */
   table.carte { width: 100%; border-collapse: separate; border-spacing: 0; }
-  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 10px; border-top: 1px solid var(--border); vertical-align: middle; }
   select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
   .menu { position: relative; display: inline-block; }
   .menu > button { white-space: nowrap; }
@@ -314,11 +316,19 @@
   .menu-liste button:hover { background: var(--bg-hover); }
   .menu-liste hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; width: 100%; }
   .menu-liste span { padding: 6px 10px; }
-  .actions { text-align: right; white-space: nowrap; }
+  .actions { text-align: right; }
+  .actions button { margin: 2px 0 2px 4px; white-space: nowrap; }
+  .nom { white-space: nowrap; }
+  td .mono { white-space: nowrap; }
+  /* Fenêtre étroite (taille par défaut) : boutons d'action en icônes seules, libellé en infobulle. */
+  @media (max-width: 1400px) {
+    .actions .libelle { display: none; }
+  }
   .col-type { width: 22px; padding-left: 0; padding-right: 0; }
-  .base { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* Base actuelle, puis « → liste + Migrer » qui restent ensemble (retour à la ligne si la fenêtre est étroite). */
+  .base { display: flex; align-items: center; column-gap: 8px; row-gap: 4px; flex-wrap: wrap; }
   .base .actuelle { white-space: nowrap; }
-  .base button { white-space: nowrap; }
+  .cible { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .rapport { padding: 12px 16px; margin-bottom: 12px; }
   .rapport-tete { display: flex; justify-content: space-between; align-items: center; }
   .rapport ul { margin: 4px 0 8px; padding-left: 20px; }
